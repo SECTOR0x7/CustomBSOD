@@ -4,6 +4,7 @@
 #include <ntintsafe.h>
 #include <ntstrsafe.h>
 static KBUGCHECK_REASON_CALLBACK_RECORD CallbackRecord = { 0 };
+BOOLEAN CallbackRegistered = FALSE;
 ULONG* g_tbcolor = NULL;
 ULONG* g_tfcolor = NULL;
 PUCHAR g_color = NULL;
@@ -1815,12 +1816,16 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
         else if (p[0] == 'C' && p[1] == '7' && p[2] == ' ') { //ChangeColorForWindows7
             p = (CHAR*)buffer + 3;
             sscanf_s(p, "%lu %lu", &foreColor, &backColor);
+            if (CallbackRegistered) KeDeregisterBugCheckReasonCallback(&CallbackRecord);
             CallbackRecord.State = 0;
             KeRegisterBugCheckReasonCallback(&CallbackRecord, (PKBUGCHECK_REASON_CALLBACK_ROUTINE)ChangeBSODColor, KbCallbackReserved1, (PUCHAR)"BSOD");
+            CallbackRegistered = TRUE;
         }
         else if (p[0] == 'R' && p[1] == '7') { //RainbowBSODForWindows7
+            if (CallbackRegistered) KeDeregisterBugCheckReasonCallback(&CallbackRecord);
             CallbackRecord.State = 0;
             KeRegisterBugCheckReasonCallback(&CallbackRecord, (PKBUGCHECK_REASON_CALLBACK_ROUTINE)RainbowBSOD, KbCallbackReserved1, (PUCHAR)"BSOD");
+            CallbackRegistered = TRUE;
         }
         else if (p[0] == 'R' && p[1] == 'D') { //(Fake)RainbowBSOD
             InstallBgpTxtDisplayCharacterHook(g_BgpTxtDisplayCharacter, 0x00000000, 0xFFFFFFFF);
