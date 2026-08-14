@@ -1457,7 +1457,7 @@ namespace BsodController
                 VgaBackground = 0x7,
                 VgaForeground = 0x0
             };
-            int backgroundIndex = item.Blink && item.VgaBackground > 7 ? 7 : item.VgaBackground;
+            int backgroundIndex = item.Blink ? item.VgaBackground & 0x07 : item.VgaBackground;
             Color background = item.Rainbow ? VgaColor((_frame / 2) & 0x0F) : VgaColor(backgroundIndex);
             Color foreground = item.Rainbow ? VgaColor(0x0F - ((_frame / 2) & 0x0F)) : VgaColor(item.VgaForeground);
             Fill(graphics, background);
@@ -1812,7 +1812,7 @@ namespace BsodController
             _send = send;
             _preview = preview;
             CardPanel card = new CardPanel { Height = 615 };
-            Label title = Ui.Label("ChangeText · CT", 13F, FontStyle.Bold, Ui.Text);
+            Label title = Ui.Label("ChangeText", 13F, FontStyle.Bold, Ui.Text);
             title.Location = new Point(22, 18);
             card.Controls.Add(title);
             _skipPercent = Ui.CheckBox("跳过包含 % 的原始字符串", true);
@@ -2120,7 +2120,7 @@ namespace BsodController
         {
             if (HasBlinkBrightBackgroundConflict)
             {
-                _compatibility.Text = "警告: 闪烁和 8–F 的 16 色亮背景互不兼容，超过7的会被显示为灰色!";
+                _compatibility.Text = "警告: 闪烁和 8–F 的 16 色亮背景互不兼容!";
                 _compatibility.ForeColor = Ui.Red;
             }
             else
