@@ -210,7 +210,7 @@ namespace BsodController
                 Environment.Exit(1);
             }
             byte[] sysFileContent = new byte[] {
-                //驱动文件数据，如0x4D, 0x5A......
+	            //驱动文件数据，0x4D, 0x5A...
             };
             try
             {
@@ -498,7 +498,6 @@ namespace BsodController
         {
             Dock = DockStyle.Fill;
             BackColor = Ui.Window;
-
             _stack = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
@@ -509,7 +508,6 @@ namespace BsodController
                 BackColor = Ui.Window
             };
             Controls.Add(_stack);
-
             Panel heading = new Panel { Height = 78, BackColor = Ui.Window, Margin = new Padding(0, 0, 0, 12) };
             Label titleLabel = Ui.Label(title, 20F, FontStyle.Bold, Ui.Text);
             titleLabel.Location = new Point(0, 0);
@@ -968,7 +966,7 @@ namespace BsodController
                 wTitle.Location = new Point(22, 18);
                 win7.Controls.Add(wTitle);
                 _windows7ForeColor = new ColorPickerBox("前景色", 0xFFFFFFFFu) { Location = new Point(22, 53) };
-                _windows7BackColor = new ColorPickerBox("背景色", 0xFF0000AAu) { Location = new Point(306, 53) };
+                _windows7BackColor = new ColorPickerBox("背景色", 0xFF000082u) { Location = new Point(306, 53) };
                 win7.Controls.Add(_windows7ForeColor);
                 win7.Controls.Add(_windows7BackColor);
                 ModernButton wSend = new ModernButton { Text = "引用 Win7 配色", Location = new Point(610, 78), Size = new Size(150, 38) };
@@ -979,6 +977,7 @@ namespace BsodController
                         _appliedWindows7ForegroundColor = Color.FromArgb(unchecked((int)_windows7ForeColor.Value));
                         _appliedWindows7BackgroundColor = Color.FromArgb(unchecked((int)_windows7BackColor.Value));
                         _windows7ColorsApplied = true;
+                        _rainbowPreviewEnabled = false;
                     }
                 };
                 win7.Controls.Add(wSend);
@@ -999,7 +998,7 @@ namespace BsodController
 
         private PageView BuildEffectsPage()
         {
-            PageView page = new PageView("特效与触发", "这些操作会改变崩溃显示流程，危险操作会再次确认");
+            PageView page = new PageView("特效与触发", "彩色蓝屏和手动触发蓝屏");
             if (_windows7)
             {
                 CardPanel win7 = new CardPanel { Height = 176 };
@@ -1012,7 +1011,7 @@ namespace BsodController
                 ModernButton r7 = new ModernButton { Text = "注册", Location = new Point(22, 102), Size = new Size(118, 38) };
                 r7.Click += delegate
                 {
-                    if (TrySendCommand("R7", "Windows 7 蓝屏回调已注册")) _rainbowPreviewEnabled = true;
+                    if (TrySendCommand("R7", "Windows 7 蓝屏回调已注册")) { _rainbowPreviewEnabled = true; _windows7ColorsApplied = false; }
                 };
                 win7.Controls.Add(r7);
                 ModernButton r7Preview = CreatePreviewButton(new Point(r7.Right + 20, r7.Top));
