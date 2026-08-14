@@ -4,8 +4,6 @@ A Windows kernel driver and companion user-mode application that allow you to fu
 
 ## Architecture Overview
 
-The project consists of two tightly integrated components that communicate to hijack and customize the native Windows bugcheck screen:
-
 ```
 ┌──────────────────────────────────────────────────┐
 │                  User Mode (R3)                  │
