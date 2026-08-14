@@ -1173,7 +1173,7 @@ namespace BsodController
                 if (MessageBox.Show($"是否发送命令？\n{command}", "确认", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.No) return;
                 foreach (string cmd in commands)
                 {
-                    _client.Send(cmd.Trim());
+                    if (!string.IsNullOrWhiteSpace(cmd)) _client.Send(cmd.Trim());
                 }
             };
             card.Controls.Add(sendBtn);
