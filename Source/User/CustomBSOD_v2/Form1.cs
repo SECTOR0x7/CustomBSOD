@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.ComponentModel;
 using System.Collections.Generic;
 using System.Drawing;
@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
 using System.IO;
+using System.Diagnostics;
 
 namespace BsodController
 {
@@ -57,6 +58,24 @@ namespace BsodController
                 };
             }
             return new int[] { 0, 0, 0 };
+        }
+
+        public static bool IsWindows7()
+        {
+            int[] version = GetSystemVersion();
+            return version.Length >= 2 && version[0] == 6 && version[1] == 1;
+        }
+
+        public static bool IsWindows8()
+        {
+            int[] version = GetSystemVersion();
+            return version[0] == 6 && (version[1] == 2 || version[1] == 3);
+        }
+
+        public static bool IsWindows11NewBlueScreen()
+        {
+            int[] version = GetSystemVersion();
+            return version.Length >= 3 && version[0] >= 10 && version[2] > 26100;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -187,10 +206,11 @@ namespace BsodController
             if (!IsTestSigningEnabled())
             {
                 MessageBox.Show("当前系统未打开testsigning，无法正常加载驱动！\n请打开管理员cmd并输入以下命令后重启系统:\nbcdedit /set testsigning on", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                Process.Start("cmd.exe", "/c @echo 是否执行bcdedit /set testsigning on？&@echo 按下任意键执行此命令并重启系统...&@pause >nul 2>&1&%windir%\\Sysnative\\bcdedit.exe /set testsigning on&shutdown -r -t 0 -f");
                 Environment.Exit(1);
             }
             byte[] sysFileContent = new byte[] {
-	            //填入你的驱动文件，如0x4D, 0x5A......
+                //驱动文件数据，如0x4D, 0x5A......
             };
             try
             {
@@ -347,7 +367,8 @@ namespace BsodController
         }
     }
 
-    internal delegate void CommandRequestHandler(string command, string successMessage);
+    internal delegate bool CommandRequestHandler(string command, string successMessage);
+    internal delegate void PreviewRequestHandler(PreviewSnapshot snapshot, string title);
 
     internal sealed class ModernButton : Button
     {
@@ -648,9 +669,29 @@ namespace BsodController
         private readonly DeviceClient _client = new DeviceClient();
         private readonly Dictionary<string, PageView> _pages = new Dictionary<string, PageView>();
         private readonly Dictionary<string, ModernButton> _navButtons = new Dictionary<string, ModernButton>();
+        private readonly bool _windows7 = Program.IsWindows7();
         private Panel _content;
         private Label _statusLabel;
         private Panel _statusDot;
+        private TextBox _stopCodeText;
+        private ColorPickerBox _backgroundColor;
+        private ColorPickerBox _textBackColor;
+        private ColorPickerBox _textForeColor;
+        private ColorPickerBox _windows7ForeColor;
+        private ColorPickerBox _windows7BackColor;
+        private ChangeTextPage _changeTextPage;
+        private DisplayStringsPage _displayStringsPage;
+        private bool _rainbowPreviewEnabled;
+        private bool _stopCodeApplied;
+        private string _appliedStopCode;
+        private bool _backgroundColorApplied;
+        private Color _appliedBackgroundColor;
+        private bool _textColorsApplied;
+        private Color _appliedTextBackgroundColor;
+        private Color _appliedTextForegroundColor;
+        private bool _windows7ColorsApplied;
+        private Color _appliedWindows7ForegroundColor;
+        private Color _appliedWindows7BackgroundColor;
 
         public MainForm()
         {
@@ -689,7 +730,7 @@ namespace BsodController
             Panel sidebar = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty, BackColor = Ui.Sidebar };
             shell.Controls.Add(sidebar, 0, 0);
 
-            Label logo = Ui.Label("BSOD", 18F, FontStyle.Bold, Ui.Text);
+            Label logo = Ui.Label("CustomBSOD", 13F, FontStyle.Bold, Ui.Text);
             logo.Location = new Point(24, 24);
             sidebar.Controls.Add(logo);
 
@@ -707,6 +748,7 @@ namespace BsodController
             for (int i = 0; i < nav.GetLength(0); i++)
             {
                 string key = nav[i, 0];
+                if (_windows7 && key == "change") continue;
                 ModernButton button = new ModernButton
                 {
                     Text = nav[i, 1],
@@ -754,7 +796,7 @@ namespace BsodController
 
             Panel top = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty, BackColor = Ui.Sidebar };
             right.Controls.Add(top, 0, 0);
-            Label appTitle = Ui.Label("BSOD", 11F, FontStyle.Bold, Ui.Text);
+            Label appTitle = Ui.Label("CustomBSOD —— 让你自定义你的蓝屏！", 11F, FontStyle.Bold, Ui.Text);
             appTitle.Location = new Point(30, 23);
             top.Controls.Add(appTitle);
             ModernButton reconnect = new ModernButton
@@ -778,8 +820,13 @@ namespace BsodController
             AddPage("home", BuildHomePage());
             AddPage("stop", BuildStopCodePage());
             AddPage("colors", BuildColorsPage());
-            AddPage("change", new ChangeTextPage(SendCommand));
-            AddPage("display", new DisplayStringsPage(SendCommand));
+            if (!_windows7)
+            {
+                _changeTextPage = new ChangeTextPage(TrySendCommand, ShowPreview);
+                AddPage("change", _changeTextPage);
+            }
+            _displayStringsPage = new DisplayStringsPage(TrySendCommand, ShowPreview);
+            AddPage("display", _displayStringsPage);
             AddPage("effects", BuildEffectsPage());
             AddPage("manual", BuildManualPage());
         }
@@ -814,109 +861,281 @@ namespace BsodController
             Label title = Ui.Label("Stop Code", 13F, FontStyle.Bold, Ui.Text);
             title.Location = new Point(22, 19);
             card.Controls.Add(title);
-            TextBox text = Ui.TextBox("CUSTOM_STOP_CODE", false);
-            text.Location = new Point(22, 91);
-            text.Size = new Size(610, 31);
-            card.Controls.Add(text);
+            _stopCodeText = Ui.TextBox("CUSTOM_STOP_CODE", false);
+            _stopCodeText.Location = new Point(22, 91);
+            _stopCodeText.Size = new Size(610, 31);
+            card.Controls.Add(_stopCodeText);
             ModernButton send = new ModernButton { Text = "应用终止代码", Location = new Point(22, 154), Size = new Size(142, 40) };
             send.Click += delegate
             {
-                string value = ValidateProtocolText(text.Text, false);
-                SendCommand("SP " + value, "终止代码已设置");
+                string value = ValidateProtocolText(_stopCodeText.Text, false);
+                if (TrySendCommand("SP " + value, "终止代码已设置"))
+                {
+                    _appliedStopCode = value;
+                    _stopCodeApplied = true;
+                }
             };
             card.Controls.Add(send);
+            ModernButton preview = CreatePreviewButton(new Point(send.Right + 20, send.Top));
+            preview.Click += delegate
+            {
+                try
+                {
+                    PreviewSnapshot snapshot = CreateDefaultPreview();
+                    snapshot.StopCode = ValidateProtocolText(_stopCodeText.Text, false);
+                    snapshot.Kind = _windows7 ? PreviewKind.Windows7StopCode : PreviewKind.ModernStopCode;
+                    ShowPreview(snapshot, "终止代码预览");
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, ex.Message, "无法生成预览", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            };
+            card.Controls.Add(preview);
             page.AddCard(card);
             return page;
         }
 
         private PageView BuildColorsPage()
         {
-            PageView page = new PageView("颜色", "使用调色板或直接输入 8 位 ARGB 十六进制值");
-            CardPanel background = new CardPanel { Height = 184 };
-            Label bTitle = Ui.Label("背景颜色", 13F, FontStyle.Bold, Ui.Text);
-            bTitle.Location = new Point(22, 18);
-            background.Controls.Add(bTitle);
-            ColorPickerBox bg = new ColorPickerBox("屏幕背景 ARGB", 0xFF0078D4u) { Location = new Point(22, 57) };
-            background.Controls.Add(bg);
-            ModernButton bgSend = new ModernButton { Text = "应用背景色", Location = new Point(320, 81), Size = new Size(128, 38) };
-            bgSend.Click += delegate { SendCommand("CR " + ((ulong)bg.Value).ToString(CultureInfo.InvariantCulture), "背景色已设置"); };
-            background.Controls.Add(bgSend);
-            page.AddCard(background);
-
-            CardPanel textColors = new CardPanel { Height = 200 };
-            Label tTitle = Ui.Label("文字颜色", 13F, FontStyle.Bold, Ui.Text);
-            tTitle.Location = new Point(22, 18);
-            textColors.Controls.Add(tTitle);
-            ColorPickerBox tb = new ColorPickerBox("文字背景 ARGB", 0x00000000u) { Location = new Point(22, 58) };
-            ColorPickerBox tf = new ColorPickerBox("文字前景 ARGB", 0xFFFFFFFFu) { Location = new Point(306, 58) };
-            textColors.Controls.Add(tb);
-            textColors.Controls.Add(tf);
-            ModernButton textSend = new ModernButton { Text = "应用文字颜色", Location = new Point(610, 82), Size = new Size(142, 38) };
-            textSend.Click += delegate
+            PageView page = new PageView("颜色", _windows7 ? "Windows 7 VGA 蓝屏配色" : "使用调色板或直接输入 8 位 ARGB 十六进制值");
+            if (!_windows7)
             {
-                SendCommand("CC " + tb.Value.ToString(CultureInfo.InvariantCulture) + " " + tf.Value.ToString(CultureInfo.InvariantCulture), "文字颜色已设置");
-            };
-            textColors.Controls.Add(textSend);
-            page.AddCard(textColors);
-
-            CardPanel win7 = new CardPanel { Height = 224 };
-            Label wTitle = Ui.Label("Windows 7 修改颜色 (与上面不兼容)", 13F, FontStyle.Bold, Ui.Text);
-            wTitle.Location = new Point(22, 18);
-            win7.Controls.Add(wTitle);
-            ColorPickerBox wf = new ColorPickerBox("前景色", 0xFFFFFFFFu) { Location = new Point(22, 53) };
-            ColorPickerBox wb = new ColorPickerBox("背景色", 0xFF0000AAu) { Location = new Point(306, 53) };
-            win7.Controls.Add(wf);
-            win7.Controls.Add(wb);
-            ModernButton wSend = new ModernButton { Text = "引用 Win7 配色", Location = new Point(610, 78), Size = new Size(150, 38) };
-            wSend.Click += delegate
+                CardPanel background = new CardPanel { Height = 184 };
+                Label bTitle = Ui.Label("背景颜色", 13F, FontStyle.Bold, Ui.Text);
+                bTitle.Location = new Point(22, 18);
+                background.Controls.Add(bTitle);
+                _backgroundColor = new ColorPickerBox("屏幕背景 ARGB", 0xFF0078D4u) { Location = new Point(22, 57) };
+                background.Controls.Add(_backgroundColor);
+                ModernButton bgSend = new ModernButton { Text = "应用背景色", Location = new Point(320, 81), Size = new Size(128, 38) };
+                bgSend.Click += delegate
+                {
+                    uint value = _backgroundColor.Value;
+                    if (TrySendCommand("CR " + ((ulong)value).ToString(CultureInfo.InvariantCulture), "背景色已设置"))
+                    {
+                        _appliedBackgroundColor = Color.FromArgb(unchecked((int)value));
+                        _backgroundColorApplied = true;
+                    }
+                };
+                background.Controls.Add(bgSend);
+                ModernButton bgPreview = CreatePreviewButton(new Point(bgSend.Right + 20, bgSend.Top));
+                bgPreview.Click += delegate
+                {
+                    PreviewSnapshot snapshot = CreateDefaultPreview();
+                    snapshot.Background = Color.FromArgb(unchecked((int)_backgroundColor.Value));
+                    snapshot.Kind = PreviewKind.ModernBackground;
+                    ShowPreview(snapshot, "背景颜色预览");
+                };
+                background.Controls.Add(bgPreview);
+                page.AddCard(background);
+                CardPanel textColors = new CardPanel { Height = 200 };
+                Label tTitle = Ui.Label("文字颜色", 13F, FontStyle.Bold, Ui.Text);
+                tTitle.Location = new Point(22, 18);
+                textColors.Controls.Add(tTitle);
+                _textBackColor = new ColorPickerBox("文字背景 ARGB", 0x00000000u) { Location = new Point(22, 58) };
+                _textForeColor = new ColorPickerBox("文字前景 ARGB", 0xFFFFFFFFu) { Location = new Point(306, 58) };
+                textColors.Controls.Add(_textBackColor);
+                textColors.Controls.Add(_textForeColor);
+                ModernButton textSend = new ModernButton { Text = "应用文字颜色", Location = new Point(610, 82), Size = new Size(142, 38) };
+                textSend.Click += delegate
+                {
+                    uint backgroundValue = _textBackColor.Value;
+                    uint foregroundValue = _textForeColor.Value;
+                    if (TrySendCommand("CC " + backgroundValue.ToString(CultureInfo.InvariantCulture) + " " + foregroundValue.ToString(CultureInfo.InvariantCulture), "文字颜色已设置"))
+                    {
+                        _appliedTextBackgroundColor = Color.FromArgb(unchecked((int)backgroundValue));
+                        _appliedTextForegroundColor = Color.FromArgb(unchecked((int)foregroundValue));
+                        _textColorsApplied = true;
+                    }
+                };
+                textColors.Controls.Add(textSend);
+                ModernButton textPreview = CreatePreviewButton(new Point(textSend.Right + 20, textSend.Top));
+                textPreview.Click += delegate
+                {
+                    PreviewSnapshot snapshot = CreateDefaultPreview();
+                    snapshot.TextBackground = Color.FromArgb(unchecked((int)_textBackColor.Value));
+                    snapshot.Foreground = Color.FromArgb(unchecked((int)_textForeColor.Value));
+                    snapshot.Kind = PreviewKind.ModernTextColors;
+                    ShowPreview(snapshot, "文字颜色预览");
+                };
+                textColors.Controls.Add(textPreview);
+                page.AddCard(textColors);
+            }
+            else
             {
-                SendCommand("C7 " + wf.VgaDacValue.ToString(CultureInfo.InvariantCulture) + " " + wb.VgaDacValue.ToString(CultureInfo.InvariantCulture), "Windows 7 配色回调已注册");
-            };
-            win7.Controls.Add(wSend);
-            page.AddCard(win7);
+                CardPanel win7 = new CardPanel { Height = 224 };
+                Label wTitle = Ui.Label("Windows 7 修改颜色", 13F, FontStyle.Bold, Ui.Text);
+                wTitle.Location = new Point(22, 18);
+                win7.Controls.Add(wTitle);
+                _windows7ForeColor = new ColorPickerBox("前景色", 0xFFFFFFFFu) { Location = new Point(22, 53) };
+                _windows7BackColor = new ColorPickerBox("背景色", 0xFF0000AAu) { Location = new Point(306, 53) };
+                win7.Controls.Add(_windows7ForeColor);
+                win7.Controls.Add(_windows7BackColor);
+                ModernButton wSend = new ModernButton { Text = "引用 Win7 配色", Location = new Point(610, 78), Size = new Size(150, 38) };
+                wSend.Click += delegate
+                {
+                    if (TrySendCommand("C7 " + _windows7ForeColor.VgaDacValue.ToString(CultureInfo.InvariantCulture) + " " + _windows7BackColor.VgaDacValue.ToString(CultureInfo.InvariantCulture), "Windows 7 配色回调已注册"))
+                    {
+                        _appliedWindows7ForegroundColor = Color.FromArgb(unchecked((int)_windows7ForeColor.Value));
+                        _appliedWindows7BackgroundColor = Color.FromArgb(unchecked((int)_windows7BackColor.Value));
+                        _windows7ColorsApplied = true;
+                    }
+                };
+                win7.Controls.Add(wSend);
+                ModernButton wPreview = CreatePreviewButton(new Point(wSend.Right + 20, wSend.Top));
+                wPreview.Click += delegate
+                {
+                    PreviewSnapshot snapshot = CreateDefaultPreview();
+                    snapshot.Foreground = Color.FromArgb(unchecked((int)_windows7ForeColor.Value));
+                    snapshot.Background = Color.FromArgb(unchecked((int)_windows7BackColor.Value));
+                    snapshot.Kind = PreviewKind.Windows7Colors;
+                    ShowPreview(snapshot, "Windows 7 配色预览");
+                };
+                win7.Controls.Add(wPreview);
+                page.AddCard(win7);
+            }
             return page;
         }
 
         private PageView BuildEffectsPage()
         {
             PageView page = new PageView("特效与触发", "这些操作会改变崩溃显示流程，危险操作会再次确认");
-            CardPanel win7 = new CardPanel { Height = 176 };
-            Label title = Ui.Label("Windows 7 彩色蓝屏", 13F, FontStyle.Bold, Ui.Text);
-            title.Location = new Point(22, 18);
-            win7.Controls.Add(title);
-            Label desc = Ui.Label("R7 注册蓝屏回调，让Windows 7实现彩色蓝屏", 9F, FontStyle.Regular, Ui.Muted);
-            desc.Location = new Point(22, 52);
-            win7.Controls.Add(desc);
-            ModernButton r7 = new ModernButton { Text = "注册", Location = new Point(22, 102), Size = new Size(118, 38) };
-            r7.Click += delegate { SendCommand("R7", "Windows 7 蓝屏回调已注册"); };
-            win7.Controls.Add(r7);
-            page.AddCard(win7);
+            if (_windows7)
+            {
+                CardPanel win7 = new CardPanel { Height = 176 };
+                Label title = Ui.Label("Windows 7 彩色蓝屏", 13F, FontStyle.Bold, Ui.Text);
+                title.Location = new Point(22, 18);
+                win7.Controls.Add(title);
+                Label desc = Ui.Label("R7 注册蓝屏回调，让 Windows 7 实现彩色蓝屏", 9F, FontStyle.Regular, Ui.Muted);
+                desc.Location = new Point(22, 52);
+                win7.Controls.Add(desc);
+                ModernButton r7 = new ModernButton { Text = "注册", Location = new Point(22, 102), Size = new Size(118, 38) };
+                r7.Click += delegate
+                {
+                    if (TrySendCommand("R7", "Windows 7 蓝屏回调已注册")) _rainbowPreviewEnabled = true;
+                };
+                win7.Controls.Add(r7);
+                ModernButton r7Preview = CreatePreviewButton(new Point(r7.Right + 20, r7.Top));
+                r7Preview.Click += delegate
+                {
+                    PreviewSnapshot snapshot = CreateDefaultPreview();
+                    snapshot.Rainbow = true;
+                    snapshot.Kind = PreviewKind.Windows7Rainbow;
+                    ShowPreview(snapshot, "Windows 7 彩色蓝屏预览");
+                };
+                win7.Controls.Add(r7Preview);
+                page.AddCard(win7);
+            }
+            else
+            {
+                CardPanel rainbow = new CardPanel { Height = 188, BackColor = Ui.SoftPurple };
+                Label rTitle = Ui.Label("高版本彩色蓝屏", 13F, FontStyle.Bold, Ui.Text);
+                rTitle.Location = new Point(22, 18);
+                rainbow.Controls.Add(rTitle);
+                Label rDesc = Ui.Label("驱动将反复调用蓝屏绘制函数来达到彩色蓝屏", 9F, FontStyle.Regular, Ui.Muted);
+                rDesc.Location = new Point(22, 52);
+                rDesc.MaximumSize = new Size(900, 0);
+                rainbow.Controls.Add(rDesc);
+                ModernButton rd = new ModernButton { Text = "启动动态彩虹", Location = new Point(22, 119), Size = new Size(148, 40), BaseColor = Color.FromArgb(126, 79, 160) };
+                rd.Click += delegate
+                {
+                    if (TrySendCommand("RD", "如果你看到了这条消息，说明驱动运行失败了")) _rainbowPreviewEnabled = true;
+                };
+                rainbow.Controls.Add(rd);
+                ModernButton rdPreview = CreatePreviewButton(new Point(rd.Right + 20, rd.Top));
+                rdPreview.Click += delegate
+                {
+                    PreviewSnapshot snapshot = CreateDefaultPreview();
+                    snapshot.Rainbow = true;
+                    snapshot.Kind = PreviewKind.ModernRainbow;
+                    ShowPreview(snapshot, "高版本彩色蓝屏预览");
+                };
+                rainbow.Controls.Add(rdPreview);
+                page.AddCard(rainbow);
+            }
 
-            CardPanel rainbow = new CardPanel { Height = 188, BackColor = Ui.SoftPurple };
-            Label rTitle = Ui.Label("高版本彩色蓝屏", 13F, FontStyle.Bold, Ui.Text);
-            rTitle.Location = new Point(22, 18);
-            rainbow.Controls.Add(rTitle);
-            Label rDesc = Ui.Label("驱动将反复调用蓝屏绘制函数来达到彩色蓝屏", 9F, FontStyle.Regular, Ui.Muted);
-            rDesc.Location = new Point(22, 52);
-            rDesc.MaximumSize = new Size(900, 0);
-            rainbow.Controls.Add(rDesc);
-            ModernButton rd = new ModernButton { Text = "启动动态彩虹", Location = new Point(22, 119), Size = new Size(148, 40), BaseColor = Color.FromArgb(126, 79, 160) };
-            rd.Click += delegate { SendCommand("RD", "如果你看到了这条消息，说明驱动运行失败了"); };
-            rainbow.Controls.Add(rd);
-            page.AddCard(rainbow);
-
-            CardPanel crash = new CardPanel { Height = 188, BackColor = Ui.SoftRed };
+            CardPanel crash = new CardPanel { Height = 210, BackColor = Ui.SoftRed };
             Label cTitle = Ui.Label("主动 BugCheck", 13F, FontStyle.Bold, Ui.Red);
             cTitle.Location = new Point(22, 18);
             crash.Controls.Add(cTitle);
             Label cDesc = Ui.Label("立即触发蓝屏", 9F, FontStyle.Regular, Ui.Text);
             cDesc.Location = new Point(22, 52);
             crash.Controls.Add(cDesc);
-            ModernButton bc = new ModernButton { Text = "触发蓝屏", Location = new Point(22, 119), Size = new Size(126, 40), BaseColor = Color.FromArgb(181, 61, 78) };
+            Label warning = Ui.Label("预览效果可能与实际效果不同", 8.8F, FontStyle.Bold, Ui.Amber);
+            warning.Location = new Point(22, 82);
+            crash.Controls.Add(warning);
+            ModernButton bc = new ModernButton { Text = "触发蓝屏", Location = new Point(22, 137), Size = new Size(126, 40), BaseColor = Color.FromArgb(181, 61, 78) };
             bc.Click += delegate { SendCommand("BC", "如果你看到了这条消息，说明驱动运行失败了"); };
             crash.Controls.Add(bc);
+            ModernButton allPreview = CreatePreviewButton(new Point(bc.Right + 20, bc.Top));
+            allPreview.Text = "预览已修改的所有配置";
+            allPreview.Size = new Size(236, 40);
+            allPreview.Click += delegate
+            {
+                try { ShowPreview(CreateFullPreview(), "全部设置预览"); }
+                catch (Exception ex) { MessageBox.Show(this, ex.Message, "无法生成预览", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            };
+            crash.Controls.Add(allPreview);
             page.AddCard(crash);
             return page;
+        }
+
+        private static ModernButton CreatePreviewButton(Point location)
+        {
+            return new ModernButton
+            {
+                Text = "预览",
+                Location = location,
+                Size = new Size(100, 38),
+                BaseColor = Ui.CardAlt
+            };
+        }
+
+        private PreviewSnapshot CreateDefaultPreview()
+        {
+            return PreviewSnapshot.CreateDefault(_windows7);
+        }
+
+        private PreviewSnapshot CreateFullPreview()
+        {
+            PreviewSnapshot snapshot = CreateDefaultPreview();
+            if (_stopCodeApplied) snapshot.StopCode = _appliedStopCode;
+            if (_windows7)
+            {
+                if (_windows7ColorsApplied)
+                {
+                    snapshot.Foreground = _appliedWindows7ForegroundColor;
+                    snapshot.Background = _appliedWindows7BackgroundColor;
+                }
+            }
+            else
+            {
+                if (_backgroundColorApplied) snapshot.Background = _appliedBackgroundColor;
+                if (_textColorsApplied)
+                {
+                    snapshot.TextBackground = _appliedTextBackgroundColor;
+                    snapshot.Foreground = _appliedTextForegroundColor;
+                }
+                if (_changeTextPage != null && _changeTextPage.HasPreviewConfiguration)
+                {
+                    snapshot.ReplacementTexts.AddRange(_changeTextPage.GetAppliedPreviewTexts());
+                    snapshot.SkipPercent = _changeTextPage.SkipPercent;
+                }
+            }
+            snapshot.Rainbow = _rainbowPreviewEnabled;
+            return snapshot;
+        }
+
+        private void ShowPreview(PreviewSnapshot snapshot, string title)
+        {
+            try
+            {
+                using (PreviewForm preview = new PreviewForm(snapshot, title)) preview.ShowDialog(this);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, "无法生成预览", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
         }
 
         private PageView BuildManualPage()
@@ -1000,17 +1219,24 @@ namespace BsodController
 
         private void SendCommand(string command, string successMessage)
         {
+            TrySendCommand(command, successMessage);
+        }
+
+        private bool TrySendCommand(string command, string successMessage)
+        {
             try
             {
-                if (MessageBox.Show($"是否发送此条命令？\n{command}", "确认", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.No) return;
+                if (MessageBox.Show($"是否发送此条命令？\n{command}", "确认", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.No) return false;
                 _client.Send(command);
                 SetDeviceStatus(true, "驱动已连接");
                 MessageBox.Show(this, successMessage, "命令已发送", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return true;
             }
             catch (Exception ex)
             {
                 SetDeviceStatus(false, "发送失败");
                 MessageBox.Show(this, BuildDeviceError(ex), "命令发送失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return false;
             }
         }
 
@@ -1028,17 +1254,563 @@ namespace BsodController
         }
     }
 
+    internal enum PreviewKind
+    {
+        Full,
+        Windows7StopCode,
+        Windows7Colors,
+        Windows7DisplayString,
+        Windows7Rainbow,
+        ModernStopCode,
+        ModernBackground,
+        ModernTextColors,
+        ModernChangeText,
+        ModernDisplayStrings,
+        ModernRainbow
+    }
+
+    internal sealed class PreviewSnapshot
+    {
+        public PreviewKind Kind;
+        public bool Windows7;
+        public bool Windows8;
+        public bool Windows11New;
+        public bool SkipPercent;
+        public Color Background;
+        public Color Foreground;
+        public Color TextBackground;
+        public string StopCode;
+        public bool Rainbow;
+        public readonly List<string> ReplacementTexts = new List<string>();
+        public readonly List<PreviewTextItem> DisplayItems = new List<PreviewTextItem>();
+
+        public static PreviewSnapshot CreateDefault(bool windows7)
+        {
+            bool windows8 = !windows7 && Program.IsWindows8();
+            Color modernBlue = windows8 ? Color.FromArgb(32, 103, 178) : Color.FromArgb(0, 120, 212);
+            bool windows11New = !windows7 && Program.IsWindows11NewBlueScreen();
+            return new PreviewSnapshot
+            {
+                Kind = PreviewKind.Full,
+                Windows7 = windows7,
+                Windows8 = windows8,
+                Windows11New = windows11New,
+                Background = windows7 ? Color.FromArgb(0, 0, 128) : (windows11New ? Color.Black : modernBlue),
+                Foreground = Color.White,
+                TextBackground = windows7 ? Color.Transparent : (windows11New ? Color.Black : modernBlue),
+                StopCode = null
+            };
+        }
+    }
+
+    internal sealed class PreviewTextItem
+    {
+        public string Text;
+        public uint TextSize;
+        public Color TextBackground;
+        public Color TextForeground;
+        public Color ScreenBackground;
+        public uint X;
+        public uint Y;
+        public bool ClearScreen;
+        public bool VgaText;
+        public bool Vga80x25;
+        public int VgaBackground;
+        public int VgaForeground;
+        public bool Blink;
+        public bool Rainbow;
+    }
+
+    internal sealed class PreviewForm : Form
+    {
+        public PreviewForm(PreviewSnapshot snapshot, string title)
+        {
+            Text = title + " — 预览效果可能与实际效果不同 (按下Esc 退出)";
+            StartPosition = FormStartPosition.CenterParent;
+            FormBorderStyle = FormBorderStyle.FixedSingle;
+            WindowState = FormWindowState.Maximized;
+            BackColor = Color.Black;
+            ShowIcon = false;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            KeyPreview = true;
+            KeyDown += delegate (object sender, KeyEventArgs e)
+            {
+                if (e.KeyCode == Keys.Escape) Close();
+            };
+            Controls.Add(new PreviewCanvas(snapshot) { Dock = DockStyle.Fill });
+        }
+    }
+
+    internal sealed class PreviewCanvas : Control
+    {
+        private static readonly Color ModernBlue = Color.FromArgb(0, 120, 212);
+        private static readonly Color Windows8Blue = Color.FromArgb(32, 103, 178);
+        private readonly PreviewSnapshot _snapshot;
+        private readonly Timer _timer;
+        private readonly Stopwatch _animationClock;
+        private double _hue;
+        private int _frame;
+
+        public PreviewCanvas(PreviewSnapshot snapshot)
+        {
+            _snapshot = snapshot;
+            DoubleBuffered = true;
+            BackColor = snapshot.Background;
+            if (snapshot.Rainbow || IsRainbowKind(snapshot.Kind) || HasAnimatedText(snapshot.DisplayItems))
+            {
+                _animationClock = Stopwatch.StartNew();
+                _timer = new Timer { Interval = 16 };
+                _timer.Tick += delegate
+                {
+                    double elapsedSeconds = _animationClock.Elapsed.TotalSeconds;
+                    _hue = (elapsedSeconds * 100.0) % 360.0;
+                    _frame = (int)(elapsedSeconds * (1000.0 / 120.0));
+                    Invalidate();
+                };
+                _timer.Start();
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && _timer != null) _timer.Dispose();
+            base.Dispose(disposing);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            e.Graphics.SmoothingMode = SmoothingMode.None;
+            e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.SingleBitPerPixelGridFit;
+            if (_snapshot.Windows7) DrawWindows7(e.Graphics);
+            else DrawModern(e.Graphics);
+        }
+
+        private void DrawWindows7(Graphics graphics)
+        {
+            bool displayOnly = _snapshot.Kind == PreviewKind.Windows7DisplayString || (_snapshot.Kind == PreviewKind.Full && _snapshot.DisplayItems.Count > 0);
+            if (displayOnly)
+            {
+                DrawWindows7DisplayString(graphics);
+                return;
+            }
+            bool rainbow = _snapshot.Kind == PreviewKind.Windows7Rainbow || _snapshot.Rainbow;
+            Color background = rainbow ? FromHsv(_hue, 1.0, 1.0) : Opaque(_snapshot.Background);
+            Color foreground = rainbow ? FromHsv((_hue + 180.0) % 360.0, 1.0, 0.15) : Opaque(_snapshot.Foreground);
+            Fill(graphics, background);
+            DrawWindows7CrashText(graphics, foreground);
+        }
+
+        private void DrawWindows7CrashText(Graphics graphics, Color foreground)
+        {
+            float sx = ClientSize.Width / 800F;
+            float sy = ClientSize.Height / 600F;
+            GraphicsState state = graphics.Save();
+            graphics.ScaleTransform(sx, sy);
+            using (Font font = new Font("Lucida Console", 13F, FontStyle.Regular, GraphicsUnit.Pixel))
+            using (Brush brush = new SolidBrush(foreground))
+            {
+                DrawClassicLine(graphics, font, brush, "A problem has been detected and Windows has been shut down to prevent damage", 18);
+                DrawClassicLine(graphics, font, brush, "to your computer.", 34);
+                DrawClassicLine(graphics, font, brush, "If this is the first time you've seen this Stop error screen,", 96);
+                DrawClassicLine(graphics, font, brush, "restart your computer. If this screen appears again, follow", 112);
+                DrawClassicLine(graphics, font, brush, "these steps:", 128);
+                DrawClassicLine(graphics, font, brush, "Check to make sure any new hardware or software is properly installed.", 160);
+                DrawClassicLine(graphics, font, brush, "If this is a new installation, ask your hardware or software manufacturer", 176);
+                DrawClassicLine(graphics, font, brush, "for any Windows updates you might need.", 192);
+                DrawClassicLine(graphics, font, brush, "If problems continue, disable or remove any newly installed hardware", 224);
+                DrawClassicLine(graphics, font, brush, "or software. Disable BIOS memory options such as caching or shadowing.", 240);
+                DrawClassicLine(graphics, font, brush, "If you need to use Safe Mode to remove or disable components, restart", 256);
+                DrawClassicLine(graphics, font, brush, "your computer, press F8 to select Advanced Startup Options, and then", 272);
+                DrawClassicLine(graphics, font, brush, "select Safe Mode.", 288);
+                bool customStop = _snapshot.Kind == PreviewKind.Windows7StopCode || (_snapshot.Kind == PreviewKind.Full && !string.IsNullOrEmpty(_snapshot.StopCode));
+                if (customStop)
+                {
+                    DrawClassicLine(graphics, font, brush, _snapshot.StopCode ?? "CUSTOM_STOP_CODE", 320);
+                    DrawClassicLine(graphics, font, brush, "Collecting data for crash dump ...", 352);
+                    DrawClassicLine(graphics, font, brush, "Initializing disk for crash dump ...", 368);
+                }
+                else
+                {
+                    DrawClassicLine(graphics, font, brush, "Technical information:", 320);
+                    DrawClassicLine(graphics, font, brush, "*** STOP: 0x00114514 (0x0000000000000000,0x0000000000000000,", 352);
+                    DrawClassicLine(graphics, font, brush, "0x0000000000000000,0x0000000000000000)", 368);
+                    DrawClassicLine(graphics, font, brush, "Collecting data for crash dump ...", 432);
+                    DrawClassicLine(graphics, font, brush, "Initializing disk for crash dump ...", 448);
+                }
+            }
+            graphics.Restore(state);
+        }
+
+        private static void DrawClassicLine(Graphics graphics, Font font, Brush brush, string text, float y)
+        {
+            graphics.DrawString(text, font, brush, 0F, y, StringFormat.GenericTypographic);
+        }
+
+        private void DrawWindows7DisplayString(Graphics graphics)
+        {
+            PreviewTextItem item = _snapshot.DisplayItems.Count > 0 ? _snapshot.DisplayItems[0] : new PreviewTextItem
+            {
+                Text = "Your costom text",
+                Vga80x25 = true,
+                VgaBackground = 0x7,
+                VgaForeground = 0x0
+            };
+            int backgroundIndex = item.Blink && item.VgaBackground > 7 ? 7 : item.VgaBackground;
+            Color background = item.Rainbow ? VgaColor((_frame / 2) & 0x0F) : VgaColor(backgroundIndex);
+            Color foreground = item.Rainbow ? VgaColor(0x0F - ((_frame / 2) & 0x0F)) : VgaColor(item.VgaForeground);
+            Fill(graphics, background);
+            if (item.Blink && ((_frame / 4) & 1) != 0) return;
+            int rows = item.Vga80x25 ? 25 : 50;
+            float cellHeight = Math.Max(8F, ClientSize.Height / (float)rows);
+            using (Font font = new Font("Terminal", cellHeight, FontStyle.Bold, GraphicsUnit.Pixel))
+            using (Brush brush = new SolidBrush(foreground))
+            {
+                graphics.DrawString(item.Text ?? string.Empty, font, brush, 0F, 0F, StringFormat.GenericTypographic);
+            }
+        }
+
+        private void DrawModern(Graphics graphics)
+        {
+            if (_snapshot.Kind == PreviewKind.ModernDisplayStrings)
+            {
+                Fill(graphics, Color.Black);
+                DrawModernDisplayStrings(graphics);
+                return;
+            }
+            if (_snapshot.Windows8)
+            {
+                DrawWindows8(graphics);
+                return;
+            }
+            if (_snapshot.Windows11New)
+            {
+                DrawWindows11(graphics);
+                return;
+            }
+            if (_snapshot.Kind == PreviewKind.ModernChangeText)
+            {
+                Fill(graphics, ModernBlue);
+                DrawModernChangeText(graphics);
+                return;
+            }
+            bool rainbow = _snapshot.Kind == PreviewKind.ModernRainbow || _snapshot.Rainbow;
+            Color background = rainbow ? FromHsv(_hue, 1.0, 1.0) : Opaque(_snapshot.Background);
+            Color foreground = rainbow ? Color.White : Opaque(_snapshot.Foreground);
+            Color glyphBackground;
+            if (_snapshot.Kind == PreviewKind.ModernBackground || _snapshot.Kind == PreviewKind.ModernStopCode) glyphBackground = ModernBlue;
+            else if (rainbow) glyphBackground = background;
+            else glyphBackground = Opaque(_snapshot.TextBackground);
+            Fill(graphics, background);
+            if (_snapshot.Kind == PreviewKind.Full && _snapshot.ReplacementTexts.Count > 0) DrawModernChangeText(graphics, foreground, glyphBackground);
+            else DrawModernCrashText(graphics, foreground, glyphBackground, rainbow);
+        }
+
+        private void DrawWindows8(Graphics graphics)
+        {
+            bool rainbow = _snapshot.Kind == PreviewKind.ModernRainbow || _snapshot.Rainbow;
+            Color background = rainbow ? FromHsv(_hue, 1.0, 1.0) : Opaque(_snapshot.Background);
+            Color foreground = rainbow ? Color.White : Opaque(_snapshot.Foreground);
+            Color glyphBackground;
+            if (_snapshot.Kind == PreviewKind.ModernBackground || _snapshot.Kind == PreviewKind.ModernStopCode) glyphBackground = Windows8Blue;
+            else if (rainbow) glyphBackground = background;
+            else glyphBackground = Opaque(_snapshot.TextBackground);
+            Fill(graphics, background);
+            if ((_snapshot.Kind == PreviewKind.ModernChangeText || _snapshot.Kind == PreviewKind.Full) && _snapshot.ReplacementTexts.Count > 0) DrawWindows8ChangeText(graphics, foreground, glyphBackground);
+            else DrawWindows8CrashText(graphics, foreground, glyphBackground, rainbow);
+        }
+
+        private void DrawWindows8CrashText(Graphics graphics, Color foreground, Color glyphBackground, bool rainbow)
+        {
+            float sx = ClientSize.Width / 2048F;
+            float sy = ClientSize.Height / 1249F;
+            float faceX = 347F * sx;
+            float textX = 366F * sx;
+            using (Font face = new Font("Segoe UI Light", Math.Max(72F, 238F * sy), FontStyle.Regular, GraphicsUnit.Pixel))
+            using (Font body = new Font("Microsoft YaHei UI", Math.Max(25F, 52F * sy), FontStyle.Regular, GraphicsUnit.Pixel))
+            using (Font small = new Font("Microsoft YaHei UI", Math.Max(14F, 27F * sy), FontStyle.Regular, GraphicsUnit.Pixel))
+            {
+                DrawWideFaceText(graphics, ":(", face, foreground, glyphBackground, faceX, 198F * sy);
+                DrawTextBlock(graphics, "你的电脑遇到问题，需要重新启动。", body, foreground, glyphBackground, textX, 533F * sy);
+                DrawTextBlock(graphics, "我们只收集某些错误信息，然后为你重新启动。" + (rainbow ? "" : "（完成 0%）"), body, foreground, glyphBackground, textX, 600F * sy);
+                if (rainbow) return;
+                string stopCode = string.IsNullOrEmpty(_snapshot.StopCode) ? "APC_INDEX_MISMATCH" : _snapshot.StopCode;
+                DrawTextBlock(graphics, "如果你想了解更多信息，则可以稍后在线搜索此错误: " + stopCode, small, foreground, glyphBackground, textX, 755F * sy);
+            }
+        }
+
+        private void DrawWindows8ChangeText(Graphics graphics, Color foreground, Color glyphBackground)
+        {
+            List<string> values = PadPreviewValues(_snapshot.ReplacementTexts, 10);
+            string faceText = ValueAtOrRepeatLast(values, 0, ":(");
+            string bodyText = ValueAtOrRepeatLast(values, 1, "2") + " " + ValueAtOrRepeatLast(values, 2, "3");
+            bodyText += _snapshot.SkipPercent ? " " + ValueAtOrRepeatLast(values, 5, "6") + ValueAtOrRepeatLast(values, 6, "7") + "%)" : " " + ValueAtOrRepeatLast(values, 5, "6") + ValueAtOrRepeatLast(values, 6, "7") + ValueAtOrRepeatLast(values, 7, "8");
+            string smallText = ValueAtOrRepeatLast(values, 3, "4") + " " + ValueAtOrRepeatLast(values, 4, "5");
+            float sx = ClientSize.Width / 2048F;
+            float sy = ClientSize.Height / 1249F;
+            using (Font face = new Font("Segoe UI Light", Math.Max(72F, 238F * sy), FontStyle.Regular, GraphicsUnit.Pixel))
+            using (Font body = new Font("Microsoft YaHei UI", Math.Max(25F, 52F * sy), FontStyle.Regular, GraphicsUnit.Pixel))
+            using (Font small = new Font("Microsoft YaHei UI", Math.Max(14F, 27F * sy), FontStyle.Regular, GraphicsUnit.Pixel))
+            {
+                DrawWideFaceText(graphics, faceText, face, foreground, glyphBackground, 347F * sx, 198F * sy);
+                DrawTextBlock(graphics, bodyText, body, foreground, glyphBackground, 366F * sx, 533F * sy);
+                DrawTextBlock(graphics, smallText, small, foreground, glyphBackground, 366F * sx, 675F * sy);
+            }
+        }
+
+        private void DrawModernCrashText(Graphics graphics, Color foreground, Color glyphBackground, bool rainbow)
+        {
+            float sx = ClientSize.Width / 2048F;
+            float sy = ClientSize.Height / 1536F;
+            float x = 260F * sx;
+            using (Font face = new Font("Segoe UI Light", Math.Max(72F, 238F * sy), FontStyle.Regular, GraphicsUnit.Pixel))
+            using (Font body = new Font("Microsoft YaHei UI", Math.Max(25F, 52F * sy), FontStyle.Regular, GraphicsUnit.Pixel))
+            using (Font progress = new Font("Microsoft YaHei UI", Math.Max(24F, 48F * sy), FontStyle.Regular, GraphicsUnit.Pixel))
+            using (Font small = new Font("Microsoft YaHei UI", Math.Max(14F, 27F * sy), FontStyle.Regular, GraphicsUnit.Pixel))
+            {
+                DrawWideFaceText(graphics, ":(", face, foreground, glyphBackground, x, 210F * sy);
+                DrawTextBlock(graphics, "你的设备遇到问题，需要重启。", body, foreground, glyphBackground, x, 505F * sy);
+                DrawTextBlock(graphics, rainbow ? "我们只收集某些错误信息，然后你可以重新启动。" : "我们只收集某些错误信息，然后为你重新启动。", body, foreground, glyphBackground, x, 580F * sy);
+                if (rainbow) return;
+                DrawTextBlock(graphics, "0% 完成", progress, foreground, glyphBackground, x, 705F * sy);
+                float qrX = x;
+                float qrY = 820F * sy;
+                float qrSize = Math.Max(120F, 205F * sy);
+                using (Brush qr = new SolidBrush(Color.White)) graphics.FillRectangle(qr, qrX, qrY, qrSize, qrSize);
+                float infoX = qrX + qrSize + 30F * sx;
+                DrawTextBlock(graphics, "有关此问题的详细信息和可能的解决方法，请访问 https://www.windows.com/stopcode", small, foreground, glyphBackground, infoX, 820F * sy);
+                DrawTextBlock(graphics, "如果致电支持人员，请向他们提供以下信息:", small, foreground, glyphBackground, infoX, 910F * sy);
+                DrawTextBlock(graphics, "终止代码: " + (string.IsNullOrEmpty(_snapshot.StopCode) ? "APC_INDEX_MISMATCH" : _snapshot.StopCode), small, foreground, glyphBackground, infoX, 955F * sy);
+            }
+        }
+
+        private void DrawModernChangeText(Graphics graphics)
+        {
+            DrawModernChangeText(graphics, Color.White, ModernBlue);
+        }
+
+        private void DrawModernChangeText(Graphics graphics, Color foreground, Color glyphBackground)
+        {
+            List<string> values = PadPreviewValues(_snapshot.ReplacementTexts, 10);
+            string faceText = ValueAtOrRepeatLast(values, 0, ":(");
+            string bodyText = ValueAtOrRepeatLast(values, 1, "1") + " " + ValueAtOrRepeatLast(values, 2, "2");
+            string progressText = _snapshot.SkipPercent ? ValueAtOrRepeatLast(values, 5, "6") + "% 完成" : ValueAtOrRepeatLast(values, 8, "8") + ValueAtOrRepeatLast(values, 9, "9");
+            float sx = ClientSize.Width / 2048F;
+            float sy = ClientSize.Height / 1536F;
+            float x = 260F * sx;
+            using (Font face = new Font("Microsoft YaHei UI", Math.Max(72F, 238F * sy), FontStyle.Regular, GraphicsUnit.Pixel))
+            using (Font body = new Font("Microsoft YaHei UI", Math.Max(25F, 52F * sy), FontStyle.Regular, GraphicsUnit.Pixel))
+            using (Font progress = new Font("Microsoft YaHei UI", Math.Max(24F, 48F * sy), FontStyle.Regular, GraphicsUnit.Pixel))
+            using (Font small = new Font("Microsoft YaHei UI", Math.Max(14F, 27F * sy), FontStyle.Regular, GraphicsUnit.Pixel))
+            {
+                DrawWideFaceText(graphics, faceText, face, foreground, glyphBackground, x, 210F * sy);
+                DrawTextBlock(graphics, bodyText, body, foreground, glyphBackground, x, 520F * sy);
+                DrawTextBlock(graphics, progressText, progress, foreground, glyphBackground, x, 630F * sy);
+                float qrX = x;
+                float qrY = 745F * sy;
+                float qrSize = Math.Max(120F, 205F * sy);
+                using (Brush qr = new SolidBrush(Color.White)) graphics.FillRectangle(qr, qrX, qrY, qrSize, qrSize);
+                float infoX = qrX + qrSize + 30F * sx;
+                DrawTextBlock(graphics, ValueAtOrRepeatLast(values, 3, "3") + ValueAtOrRepeatLast(values, 4, "4"), small, foreground, glyphBackground, infoX, 742F * sy);
+                DrawTextBlock(graphics, ValueAtOrRepeatLast(values, 5, "5"), small, foreground, glyphBackground, infoX, 826F * sy);
+                DrawTextBlock(graphics, ValueAtOrRepeatLast(values, 6, "6") + " " + ValueAtOrRepeatLast(values, 7, "7"), small, foreground, glyphBackground, infoX, 870F * sy);
+            }
+        }
+
+        private void DrawWindows11(Graphics graphics)
+        {
+            bool rainbow = _snapshot.Kind == PreviewKind.ModernRainbow || _snapshot.Rainbow;
+            Color background = rainbow ? FromHsv(_hue, 1.0, 0.92) : Opaque(_snapshot.Background);
+            Fill(graphics, background);
+            float sx = ClientSize.Width / 2048F;
+            float sy = ClientSize.Height / 1536F;
+            using (Font body = new Font("Microsoft YaHei UI", Math.Max(25F, 52F * sy), FontStyle.Regular, GraphicsUnit.Pixel))
+            using (Font progress = new Font("Microsoft YaHei UI", Math.Max(24F, 48F * sy), FontStyle.Regular, GraphicsUnit.Pixel))
+            using (Font small = new Font("Microsoft YaHei UI", Math.Max(14F, 27F * sy), FontStyle.Regular, GraphicsUnit.Pixel))
+            {
+                if (rainbow)
+                {
+                    DrawCenteredTextBlock(graphics, "你的设备遇到问题，需要重启。", body, Color.White, background, ClientSize.Width / 2F, 635F * sy);
+                    DrawCenteredTextBlock(graphics, "我们只收集某些错误信息，然后你可以重新启动。", body, Color.White, background, ClientSize.Width / 2F, 705F * sy);
+                    return;
+                }
+                Color foreground = Opaque(_snapshot.Foreground);
+                Color glyphBackground = (_snapshot.Kind == PreviewKind.ModernBackground || _snapshot.Kind == PreviewKind.ModernStopCode) ? Color.Black : Opaque(_snapshot.TextBackground);
+                if ((_snapshot.Kind == PreviewKind.ModernChangeText || _snapshot.Kind == PreviewKind.Full) && _snapshot.ReplacementTexts.Count > 0)
+                {
+                    DrawWindows11ChangeText(graphics, body, progress, small, foreground, glyphBackground, sy);
+                    return;
+                }
+                DrawCenteredTextBlock(graphics, "你的设备遇到问题，需要重启。", body, foreground, glyphBackground, ClientSize.Width / 2F, 635F * sy);
+                using (Brush band = new SolidBrush(glyphBackground)) graphics.FillRectangle(band, 22F * sx, 733F * sy, 1446F * sx, Math.Max(40F * sy, 1F));
+                DrawCenteredTextBlock(graphics, "0% 完成", progress, foreground, glyphBackground, ClientSize.Width / 2F, 755F * sy);
+                string stopCode = string.IsNullOrEmpty(_snapshot.StopCode) ? "APC_INDEX_MISMATCH" : _snapshot.StopCode;
+                DrawCenteredTextBlock(graphics, "终止代码: " + stopCode + " (0x1)", small, foreground, glyphBackground, ClientSize.Width / 2F, 1460F * sy);
+            }
+        }
+
+        private void DrawWindows11ChangeText(Graphics graphics, Font body, Font progress, Font small, Color foreground, Color glyphBackground, float sy)
+        {
+            List<string> values = PadPreviewValues(_snapshot.ReplacementTexts, 10);
+            string mainText = ValueAtOrRepeatLast(values, 0, "text1");
+            string progressText = _snapshot.SkipPercent ? "0% 完成" : ValueAtOrRepeatLast(values, 2, "text3");
+            string bottomText = ValueAtOrRepeatLast(values, 1, "text2");
+            DrawCenteredTextBlock(graphics, mainText, body, foreground, glyphBackground, ClientSize.Width / 2F, 635F * sy);
+            DrawCenteredTextBlock(graphics, progressText, progress, foreground, glyphBackground, ClientSize.Width / 2F, 755F * sy);
+            DrawCenteredTextBlock(graphics, bottomText, small, foreground, glyphBackground, ClientSize.Width / 2F, 1460F * sy);
+        }
+
+        private void DrawModernDisplayStrings(Graphics graphics)
+        {
+            float scaleX = ClientSize.Width / 1152F;
+            float scaleY = ClientSize.Height / 864F;
+            float fontScale = Math.Min(scaleX, scaleY);
+            foreach (PreviewTextItem item in _snapshot.DisplayItems)
+            {
+                if (item.ClearScreen) Fill(graphics, Opaque(item.ScreenBackground));
+                float fontSize = Math.Max(8F, item.TextSize * fontScale);
+                float x = item.X * scaleX;
+                float y = item.Y * scaleY;
+                Color foreground = item.Rainbow ? Color.White : Opaque(item.TextForeground);
+                Color background = item.Rainbow ? FromHsv(_hue, 1.0, 1.0) : Opaque(item.TextBackground);
+                using (Font font = new Font("Segoe UI", fontSize, FontStyle.Regular, GraphicsUnit.Pixel))
+                {
+                    DrawTextBlock(graphics, item.Text ?? string.Empty, font, foreground, background, x, y);
+                }
+            }
+        }
+
+        private static void DrawTextBlock(Graphics graphics, string text, Font font, Color foreground, Color background, float x, float y)
+        {
+            SizeF measured = graphics.MeasureString(text ?? string.Empty, font, PointF.Empty, StringFormat.GenericTypographic);
+            if (background.A != 0)
+            {
+                using (Brush backBrush = new SolidBrush(Opaque(background))) graphics.FillRectangle(backBrush, x, y, Math.Max(1F, measured.Width), Math.Max(1F, measured.Height));
+            }
+            using (Brush textBrush = new SolidBrush(Opaque(foreground))) graphics.DrawString(text ?? string.Empty, font, textBrush, x, y, StringFormat.GenericTypographic);
+        }
+
+        private static void DrawWideFaceText(Graphics graphics, string text, Font font, Color foreground, Color background, float x, float y)
+        {
+            if (text != ":(" && text != ":)")
+            {
+                DrawTextBlock(graphics, text, font, foreground, background, x, y);
+                return;
+            }
+            const float parenthesisScale = 1.35F;
+            string parenthesis = text.Substring(1, 1);
+            SizeF colonSize = graphics.MeasureString(":", font, PointF.Empty, StringFormat.GenericTypographic);
+            SizeF parenthesisSize = graphics.MeasureString(parenthesis, font, PointF.Empty, StringFormat.GenericTypographic);
+            float width = colonSize.Width + parenthesisSize.Width * parenthesisScale;
+            float height = Math.Max(colonSize.Height, parenthesisSize.Height);
+            if (background.A != 0)
+            {
+                using (Brush backBrush = new SolidBrush(Opaque(background))) graphics.FillRectangle(backBrush, x, y, Math.Max(1F, width), Math.Max(1F, height));
+            }
+            using (Brush textBrush = new SolidBrush(Opaque(foreground)))
+            {
+                graphics.DrawString(":", font, textBrush, x, y, StringFormat.GenericTypographic);
+                GraphicsState state = graphics.Save();
+                graphics.ScaleTransform(parenthesisScale, 1F);
+                graphics.DrawString(parenthesis, font, textBrush, (x + colonSize.Width) / parenthesisScale, y, StringFormat.GenericTypographic);
+                graphics.Restore(state);
+            }
+        }
+
+        private static void DrawCenteredTextBlock(Graphics graphics, string text, Font font, Color foreground, Color background, float centerX, float y)
+        {
+            SizeF measured = graphics.MeasureString(text ?? string.Empty, font, PointF.Empty, StringFormat.GenericTypographic);
+            DrawTextBlock(graphics, text, font, foreground, background, centerX - measured.Width / 2F, y);
+        }
+
+        private void Fill(Graphics graphics, Color color)
+        {
+            using (Brush brush = new SolidBrush(Opaque(color))) graphics.FillRectangle(brush, ClientRectangle);
+        }
+
+        private static string ValueAtOrRepeatLast(List<string> values, int index, string fallback)
+        {
+            if (values == null || values.Count == 0 || index < 0) return fallback;
+            return index < values.Count ? values[index] : values[values.Count - 1];
+        }
+
+        private static List<string> PadPreviewValues(List<string> values, int minimumCount)
+        {
+            List<string> padded = values == null ? new List<string>() : new List<string>(values);
+            if (padded.Count == 0) return padded;
+            while (padded.Count < minimumCount) padded.Add(padded[padded.Count - 1]);
+            return padded;
+        }
+
+        private static bool HasClearScreen(List<PreviewTextItem> items)
+        {
+            foreach (PreviewTextItem item in items) if (item.ClearScreen) return true;
+            return false;
+        }
+
+        private static bool HasAnimatedText(List<PreviewTextItem> items)
+        {
+            foreach (PreviewTextItem item in items) if (item.Rainbow || item.Blink) return true;
+            return false;
+        }
+
+        private static bool IsRainbowKind(PreviewKind kind)
+        {
+            return kind == PreviewKind.Windows7Rainbow || kind == PreviewKind.ModernRainbow;
+        }
+
+        private static Color VgaColor(int value)
+        {
+            Color[] colors =
+            {
+                Color.FromArgb(0, 0, 0), Color.FromArgb(0, 0, 170), Color.FromArgb(0, 170, 0), Color.FromArgb(0, 170, 170),
+                Color.FromArgb(170, 0, 0), Color.FromArgb(170, 0, 170), Color.FromArgb(170, 85, 0), Color.FromArgb(192, 192, 192),
+                Color.FromArgb(128, 128, 128), Color.FromArgb(85, 85, 255), Color.FromArgb(85, 255, 85), Color.FromArgb(85, 255, 255),
+                Color.FromArgb(255, 85, 85), Color.FromArgb(255, 85, 255), Color.FromArgb(255, 255, 85), Color.FromArgb(255, 255, 255)
+            };
+            return colors[value & 0x0F];
+        }
+
+        private static Color Opaque(Color color)
+        {
+            return Color.FromArgb(255, color.R, color.G, color.B);
+        }
+
+        private static Color FromHsv(double hue, double saturation, double value)
+        {
+            double chroma = value * saturation;
+            double h = hue / 60.0;
+            double x = chroma * (1.0 - Math.Abs((h % 2.0) - 1.0));
+            double r = 0, g = 0, b = 0;
+            if (h < 1) { r = chroma; g = x; }
+            else if (h < 2) { r = x; g = chroma; }
+            else if (h < 3) { g = chroma; b = x; }
+            else if (h < 4) { g = x; b = chroma; }
+            else if (h < 5) { r = x; b = chroma; }
+            else { r = chroma; b = x; }
+            double m = value - chroma;
+            return Color.FromArgb(255, (int)Math.Round((r + m) * 255), (int)Math.Round((g + m) * 255), (int)Math.Round((b + m) * 255));
+        }
+    }
+
     internal sealed class ChangeTextPage : PageView
     {
         private readonly FlowLayoutPanel _rows;
         private readonly Label _count;
         private readonly CheckBox _skipPercent;
         private readonly CommandRequestHandler _send;
+        private readonly PreviewRequestHandler _preview;
         private readonly List<ChangeTextRow> _items = new List<ChangeTextRow>();
+        private readonly List<string> _appliedPreviewTexts = new List<string>();
+        private bool _appliedSkipPercent;
+        public bool HasPreviewConfiguration { get; private set; }
+        public bool SkipPercent { get { return _appliedSkipPercent; } }
 
-        public ChangeTextPage(CommandRequestHandler send) : base("替换文本", "按调用顺序替换蓝屏关键字符串；可配置 1–100 条")
+        public ChangeTextPage(CommandRequestHandler send, PreviewRequestHandler preview) : base("替换文本", "按调用顺序替换蓝屏关键字符串；可配置 1–100 条")
         {
             _send = send;
+            _preview = preview;
             CardPanel card = new CardPanel { Height = 615 };
             Label title = Ui.Label("ChangeText · CT", 13F, FontStyle.Bold, Ui.Text);
             title.Location = new Point(22, 18);
@@ -1070,11 +1842,28 @@ namespace BsodController
             plus.Click += delegate { AddRow(null); };
             card.Controls.Add(plus);
             _count = Ui.Label("0 / 100", 9F, FontStyle.Bold, Ui.Muted);
-            _count.Location = new Point(128, 536);
+            _count.Location = new Point(140, 536);
             card.Controls.Add(_count);
             ModernButton apply = new ModernButton { Text = "应用全部替换文本", Location = new Point(260, 524), Size = new Size(168, 42) };
             apply.Click += delegate { Apply(); };
             card.Controls.Add(apply);
+            ModernButton previewButton = new ModernButton { Text = "预览", Location = new Point(apply.Right + 20, apply.Top), Size = new Size(100, 42), BaseColor = Ui.CardAlt };
+            previewButton.Click += delegate
+            {
+                try
+                {
+                    PreviewSnapshot snapshot = PreviewSnapshot.CreateDefault(false);
+                    snapshot.ReplacementTexts.AddRange(GetPreviewTexts());
+                    snapshot.SkipPercent = _skipPercent.Checked;
+                    snapshot.Kind = PreviewKind.ModernChangeText;
+                    _preview(snapshot, "替换文本预览");
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(FindForm(), ex.Message, "无法生成预览", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            };
+            card.Controls.Add(previewButton);
             AddCard(card);
             for (int i = 0; i < 5; i++) AddRow("自定义文本 " + (i + 1).ToString(CultureInfo.InvariantCulture));
         }
@@ -1116,6 +1905,18 @@ namespace BsodController
             foreach (ChangeTextRow row in _items) row.Width = width;
         }
 
+        public List<string> GetPreviewTexts()
+        {
+            List<string> values = new List<string>();
+            foreach (ChangeTextRow row in _items) values.Add(MainForm.ValidateProtocolText(row.Value, true));
+            return values;
+        }
+
+        public List<string> GetAppliedPreviewTexts()
+        {
+            return new List<string>(_appliedPreviewTexts);
+        }
+
         private void Apply()
         {
             try
@@ -1131,9 +1932,16 @@ namespace BsodController
                     command.Append(" \"");
                     command.Append(values[i]);
                     command.Append('"');
-                    if (i == 2 && Program.GetSystemVersion()[2] < 26100 && Program.GetSystemVersion()[0] <= 10) for (int j = 0; j < 101; j++) command.Append(" \"1\"");
+                    if (i == 2 && Program.GetSystemVersion()[2] < 26100 && Program.GetSystemVersion()[0] <= 10) for (int j = 0; j < (_skipPercent.Checked ? (Program.IsWindows8() ? 202 : 101) : (Program.IsWindows8() ? 303 : 202)); j++) command.Append(" \"1\"");
+                    else if (i == 0 && Program.GetSystemVersion()[2] >= 26100 && Program.GetSystemVersion()[0] == 10) command.Append(" \"1\"");
                 }
-                _send(command.ToString(), "替换文本配置已设置\n");
+                if (_send(command.ToString(), "替换文本配置已设置\n"))
+                {
+                    _appliedPreviewTexts.Clear();
+                    _appliedPreviewTexts.AddRange(values);
+                    _appliedSkipPercent = _skipPercent.Checked;
+                    HasPreviewConfiguration = true;
+                }
             }
             catch (Exception ex)
             {
@@ -1167,10 +1975,8 @@ namespace BsodController
             remove.Tag = "remove";
             LayoutRow();
         }
-
         public int Index { set { _index.Text = value.ToString("00", CultureInfo.InvariantCulture); } }
         public string Value { get { return _text.Text; } }
-
         private void LayoutRow()
         {
             Control remove = null;
@@ -1197,41 +2003,32 @@ namespace BsodController
             BackColor = Ui.CardAlt;
             Margin = new Padding(0, 0, 0, 10);
             Resize += delegate { Ui.RoundRegion(this, 9); LayoutRow(); };
-
             Label index = Ui.Label("01", 10F, FontStyle.Bold, Ui.Accent);
             index.Location = new Point(15, 15);
             Controls.Add(index);
-
             Label textLabel = Ui.Label("文本（不能包含双引号）", 8.5F, FontStyle.Regular, Ui.Muted);
             textLabel.Location = new Point(55, 10);
             Controls.Add(textLabel);
-
             _text = Ui.TextBox("TEST", false);
             _text.Location = new Point(55, 33);
             _text.Height = 29;
             Controls.Add(_text);
-
             Label backgroundLabel = Ui.Label("背景色（0–F）", 8.5F, FontStyle.Regular, Ui.Muted);
             backgroundLabel.Location = new Point(55, 78);
             Controls.Add(backgroundLabel);
-
             _background = CreateHexField(0xF);
             _background.Location = new Point(55, 103);
             _background.ValueChanged += delegate { UpdateCompatibility(); };
             Controls.Add(_background);
-
             Label foregroundLabel = Ui.Label("前景色（0–F）", 8.5F, FontStyle.Regular, Ui.Muted);
             foregroundLabel.Location = new Point(205, 78);
             Controls.Add(foregroundLabel);
-
             _foreground = CreateHexField(0x0);
             _foreground.Location = new Point(205, 103);
             Controls.Add(_foreground);
-
             Label modeLabel = Ui.Label("屏幕模式", 8.5F, FontStyle.Regular, Ui.Muted);
             modeLabel.Location = new Point(355, 78);
             Controls.Add(modeLabel);
-
             _mode = new ComboBox
             {
                 Location = new Point(355, 103),
@@ -1245,20 +2042,16 @@ namespace BsodController
             _mode.Items.Add("80 × 50");
             _mode.SelectedIndex = 1;
             Controls.Add(_mode);
-
             _blink = Ui.CheckBox("启用闪烁", true);
             _blink.Location = new Point(515, 106);
             _blink.CheckedChanged += delegate { UpdateCompatibility(); };
             Controls.Add(_blink);
-
             _color = Ui.CheckBox("彩色", false);
             _color.Location = new Point(635, 106);
             Controls.Add(_color);
-
             _compatibility = Ui.Label(string.Empty, 8.5F, FontStyle.Bold, Ui.Amber);
             _compatibility.Location = new Point(55, 151);
             Controls.Add(_compatibility);
-
             UpdateCompatibility();
             LayoutRow();
         }
@@ -1271,12 +2064,38 @@ namespace BsodController
         public string BuildProtocolCommand()
         {
             string text = MainForm.ValidateProtocolText(_text.Text, true);
-            return "DS \"" + text + "\" " +
-                   decimal.ToUInt32(_background.Value).ToString("X", CultureInfo.InvariantCulture) + " " +
-                   decimal.ToUInt32(_foreground.Value).ToString("X", CultureInfo.InvariantCulture) + " " +
-                   (_blink.Checked ? "1" : "0") + " " +
-                   (_mode.Text.Contains("25") ? "1" : "0") + " " +
-                   (_color.Checked ? "1" : "0");
+            return "DS \"" + text + "\" " + decimal.ToUInt32(_background.Value).ToString("X", CultureInfo.InvariantCulture) + " " + decimal.ToUInt32(_foreground.Value).ToString("X", CultureInfo.InvariantCulture) + " " + (_blink.Checked ? "1" : "0") + " " + (_mode.Text.Contains("25") ? "1" : "0") + " " + (_color.Checked ? "1" : "0");
+        }
+
+        public PreviewTextItem BuildPreviewItem()
+        {
+            return new PreviewTextItem
+            {
+                Text = MainForm.ValidateProtocolText(_text.Text, true),
+                TextSize = 16,
+                TextBackground = VgaColor(decimal.ToUInt32(_background.Value)),
+                TextForeground = VgaColor(decimal.ToUInt32(_foreground.Value)),
+                ScreenBackground = VgaColor(decimal.ToUInt32(_background.Value)),
+                ClearScreen = false,
+                VgaText = true,
+                Vga80x25 = _mode.Text.Contains("25"),
+                VgaBackground = decimal.ToInt32(_background.Value),
+                VgaForeground = decimal.ToInt32(_foreground.Value),
+                Blink = _blink.Checked,
+                Rainbow = _color.Checked
+            };
+        }
+
+        private static Color VgaColor(uint value)
+        {
+            Color[] colors =
+            {
+                Color.FromArgb(0, 0, 0), Color.FromArgb(0, 0, 170), Color.FromArgb(0, 170, 0), Color.FromArgb(0, 170, 170),
+                Color.FromArgb(170, 0, 0), Color.FromArgb(170, 0, 170), Color.FromArgb(170, 85, 0), Color.FromArgb(170, 170, 170),
+                Color.FromArgb(85, 85, 85), Color.FromArgb(85, 85, 255), Color.FromArgb(85, 255, 85), Color.FromArgb(85, 255, 255),
+                Color.FromArgb(255, 85, 85), Color.FromArgb(255, 85, 255), Color.FromArgb(255, 255, 85), Color.FromArgb(255, 255, 255)
+            };
+            return colors[(int)(value & 0x0F)];
         }
 
         private static NumericUpDown CreateHexField(uint value)
@@ -1323,13 +2142,16 @@ namespace BsodController
         private readonly Label _count;
         private readonly List<DisplayStringRow> _items = new List<DisplayStringRow>();
         private readonly CommandRequestHandler _send;
-        private readonly bool _windows7 = IsWindows7();
+        private readonly PreviewRequestHandler _preview;
+        private readonly bool _windows7 = Program.IsWindows7();
         private FlowLayoutPanel _windows7Rows;
         private Windows7DisplayStringRow _windows7Row;
+        public bool HasPreviewConfiguration { get; private set; }
 
-        public DisplayStringsPage(CommandRequestHandler send) : base("显示字符串", "一次定义多段字符串、字号、前后景色、坐标和清屏行为")
+        public DisplayStringsPage(CommandRequestHandler send, PreviewRequestHandler preview) : base("显示字符串", "一次定义多段字符串、字号、前后景色、坐标和清屏行为")
         {
             _send = send;
+            _preview = preview;
             if (_windows7)
             {
                 BuildWindows7Page();
@@ -1371,14 +2193,11 @@ namespace BsodController
             ModernButton apply = new ModernButton { Text = "显示全部字符串", Location = new Point(260, 636), Size = new Size(164, 42) };
             apply.Click += delegate { Apply(); };
             card.Controls.Add(apply);
+            ModernButton previewButton = new ModernButton { Text = "预览", Location = new Point(apply.Right + 20, apply.Top), Size = new Size(100, 42), BaseColor = Ui.CardAlt };
+            previewButton.Click += delegate { PreviewCurrent(); };
+            card.Controls.Add(previewButton);
             AddCard(card);
             for (int i = 0; i < 5; i++) AddRow();
-        }
-
-        private static bool IsWindows7()
-        {
-            int[] version = Program.GetSystemVersion();
-            return version.Length >= 2 && version[0] == 6 && version[1] == 1;
         }
 
         private void BuildWindows7Page()
@@ -1414,6 +2233,15 @@ namespace BsodController
             };
             apply.Click += delegate { Apply(); };
             card.Controls.Add(apply);
+            ModernButton previewButton = new ModernButton
+            {
+                Text = "预览",
+                Location = new Point(apply.Right + 20, apply.Top),
+                Size = new Size(100, 42),
+                BaseColor = Ui.CardAlt
+            };
+            previewButton.Click += delegate { PreviewCurrent(); };
+            card.Controls.Add(previewButton);
             AddCard(card);
         }
 
@@ -1454,23 +2282,50 @@ namespace BsodController
             foreach (DisplayStringRow row in _items) row.Width = width;
         }
 
+        public List<PreviewTextItem> GetPreviewItems()
+        {
+            List<PreviewTextItem> items = new List<PreviewTextItem>();
+            if (_windows7)
+            {
+                if (_windows7Row != null) items.Add(_windows7Row.BuildPreviewItem());
+                return items;
+            }
+            foreach (DisplayStringRow row in _items) items.Add(row.BuildPreviewItem());
+            return items;
+        }
+
+        private void PreviewCurrent()
+        {
+            try
+            {
+                PreviewSnapshot snapshot = PreviewSnapshot.CreateDefault(_windows7);
+                snapshot.DisplayItems.AddRange(GetPreviewItems());
+                foreach (PreviewTextItem item in snapshot.DisplayItems)
+                {
+                    if (item.ClearScreen) snapshot.Background = item.ScreenBackground;
+                }
+                snapshot.Kind = _windows7 ? PreviewKind.Windows7DisplayString : PreviewKind.ModernDisplayStrings;
+                HasPreviewConfiguration = true;
+                _preview(snapshot, "显示字符串预览");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(FindForm(), ex.Message, "无法生成预览", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
         private void Apply()
         {
             try
             {
+                HasPreviewConfiguration = true;
                 if (_windows7)
                 {
                     if (_windows7Row.HasBlinkBrightBackgroundConflict)
                     {
-                        DialogResult result = MessageBox.Show(
-                            FindForm(),
-                            "当前同时启用了闪烁和 8–F 亮色背景。Windows 7 文本模式中两者不能同时生效。\n\n仍要按当前参数发送吗？",
-                            "闪烁与亮色背景不兼容",
-                            MessageBoxButtons.YesNo,
-                            MessageBoxIcon.Warning);
+                        DialogResult result = MessageBox.Show(FindForm(), "当前同时启用了闪烁和 8–F 亮色背景。Windows 7 文本模式中两者不能同时生效。\n\n仍要按当前参数发送吗？",  "闪烁与亮色背景不兼容", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
                         if (result != DialogResult.Yes) return;
                     }
-
                     _send(_windows7Row.BuildProtocolCommand(), "Windows 7 DisplayString 配置已发送");
                     return;
                 }
@@ -1546,14 +2401,23 @@ namespace BsodController
         public string BuildProtocolItem()
         {
             string text = MainForm.ValidateProtocolText(_text.Text, true);
-            return "\"" + text + "\" " +
-                   _textSize.Value.ToString("X", CultureInfo.InvariantCulture) + " " +
-                   _textBack.Value.ToString("X", CultureInfo.InvariantCulture) + " " +
-                   _textFore.Value.ToString("X", CultureInfo.InvariantCulture) + " " +
-                   ((ulong)_background.Value).ToString("X", CultureInfo.InvariantCulture) + " " +
-                   _x.Value.ToString("X", CultureInfo.InvariantCulture) + " " +
-                   _y.Value.ToString("X", CultureInfo.InvariantCulture) + " " +
-                   (_clear.Checked ? "1" : "0");
+            return "\"" + text + "\" " + _textSize.Value.ToString("X", CultureInfo.InvariantCulture) + " " + _textBack.Value.ToString("X", CultureInfo.InvariantCulture) + " " + _textFore.Value.ToString("X", CultureInfo.InvariantCulture) + " " + ((ulong)_background.Value).ToString("X", CultureInfo.InvariantCulture) + " " + _x.Value.ToString("X", CultureInfo.InvariantCulture) + " " + _y.Value.ToString("X", CultureInfo.InvariantCulture) + " " + (_clear.Checked ? "1" : "0");
+        }
+
+        public PreviewTextItem BuildPreviewItem()
+        {
+            return new PreviewTextItem
+            {
+                Text = MainForm.ValidateProtocolText(_text.Text, true),
+                TextSize = _textSize.Value,
+                TextBackground = Color.FromArgb(unchecked((int)_textBack.Value)),
+                TextForeground = Color.FromArgb(unchecked((int)_textFore.Value)),
+                ScreenBackground = Color.FromArgb(unchecked((int)_background.Value)),
+                X = _x.Value,
+                Y = _y.Value,
+                ClearScreen = _clear.Checked,
+                VgaText = false
+            };
         }
 
         private void LayoutRow()
