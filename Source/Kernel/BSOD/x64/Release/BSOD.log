@@ -1,0 +1,50 @@
+﻿  Building 'BSOD' with toolset 'WindowsKernelModeDriver10.0' and the 'Universal' target platform.
+  Driver.cpp
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(436,20): warning C4996: 'ExAllocatePoolWithTag': ExAllocatePoolWithTag is deprecated, use ExAllocatePool2.
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(508,29): warning C4996: 'ExAllocatePoolWithTag': ExAllocatePoolWithTag is deprecated, use ExAllocatePool2.
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(514,28): warning C4996: 'ExAllocatePoolWithTag': ExAllocatePoolWithTag is deprecated, use ExAllocatePool2.
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(520,31): warning C4996: 'ExAllocatePoolWithTag': ExAllocatePoolWithTag is deprecated, use ExAllocatePool2.
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(495,11): warning C4189: “segD_len”: 局部变量已初始化但不引用
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(633,28): warning C4996: 'ExAllocatePoolWithTag': ExAllocatePoolWithTag is deprecated, use ExAllocatePool2.
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(636,31): warning C4996: 'ExAllocatePoolWithTag': ExAllocatePoolWithTag is deprecated, use ExAllocatePool2.
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(716,21): warning C4996: 'ExAllocatePoolWithTag': ExAllocatePoolWithTag is deprecated, use ExAllocatePool2.
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(719,31): warning C4996: 'ExAllocatePoolWithTag': ExAllocatePoolWithTag is deprecated, use ExAllocatePool2.
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(701,12): warning C4189: “funcBytes”: 局部变量已初始化但不引用
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(893,21): warning C4996: 'ExAllocatePool': ExAllocatePool is deprecated, use ExAllocatePool2.
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(895,24): warning C4996: 'ExAllocatePoolWithTag': ExAllocatePoolWithTag is deprecated, use ExAllocatePool2.
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1150,57): warning C4244: “参数”: 从“ULONG64”转换到“ULONG”，可能丢失数据
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1164,44): warning C4100: 'Reason': 未引用的参数
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1280,48): warning C4100: 'Reason': 未引用的参数
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1636,19): warning C4459: “backColor”的声明隐藏了全局声明
+      C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1278,7):
+      参见“backColor”的声明
+  
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1636,30): warning C4459: “foreColor”的声明隐藏了全局声明
+      C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1279,7):
+      参见“foreColor”的声明
+  
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1755,27): warning C4459: “backColor”的声明隐藏了全局声明
+      C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1278,7):
+      参见“backColor”的声明
+  
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1755,38): warning C4459: “foreColor”的声明隐藏了全局声明
+      C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1279,7):
+      参见“foreColor”的声明
+  
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1802,56): warning C4477: “sscanf_s”: 格式字符串“%u”需要类型“unsigned int *”的参数，但可变参数 7 拥有了类型“BOOLEAN *”
+      C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1802,56):
+      请考虑在格式字符串中使用“%hhu”
+  
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1597,53): warning C4996: 'ExAllocatePoolWithTag': ExAllocatePoolWithTag is deprecated, use ExAllocatePool2.
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1611,51): warning C4996: 'ExAllocatePoolWithTag': ExAllocatePoolWithTag is deprecated, use ExAllocatePool2.
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1652,28): warning C4996: 'ExAllocatePoolWithTag': ExAllocatePoolWithTag is deprecated, use ExAllocatePool2.
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1661,37): warning C4996: 'ExAllocatePoolWithTag': ExAllocatePoolWithTag is deprecated, use ExAllocatePool2.
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1680,46): warning C4996: 'ExAllocatePoolWithTag': ExAllocatePoolWithTag is deprecated, use ExAllocatePool2.
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1706,43): warning C4996: 'ExAllocatePoolWithTag': ExAllocatePoolWithTag is deprecated, use ExAllocatePool2.
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1743,40): warning C4996: 'ExAllocatePoolWithTag': ExAllocatePoolWithTag is deprecated, use ExAllocatePool2.
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1781,36): warning C4996: 'ExAllocatePoolWithTag': ExAllocatePoolWithTag is deprecated, use ExAllocatePool2.
+C:\Users\qianyanchen\source\repos\BSOD\BSOD\Driver.cpp(1576,39): warning C4100: 'DeviceObject': 未引用的参数
+  BSOD.vcxproj -> C:\Users\qianyanchen\source\repos\BSOD\x64\Release\BSOD.sys
+  Driver is 'Universal'.
+  DrvCat task was skipped as there was no catalog file to process
+  
