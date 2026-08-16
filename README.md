@@ -98,4 +98,5 @@ Startup sequence:
 2. Extracts the embedded driver binary to disk
 3. Creates the driver service registry and load the driver
 4. Show the main window
+
 ![](/../main/assets/3.png)
