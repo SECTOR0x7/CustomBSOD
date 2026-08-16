@@ -68,7 +68,7 @@ Key functions discovered:
 - `BcpDisplayCriticalString` - The function is used to render text, such as ":("
 - `BcpDisplayCriticalStringCentered` - Just like `BcpDisplayCriticalString`, but it appeared after the Windows 11 25H2 version
 - `BgpClearScreen` - The function renders the background of the BSOD.
-- `BgpTxtDisplayCharacter` - The function is used to render a character on the BSOD.
+- `BgpTxtDisplayCharacter` - The function is used to render **one** character on the BSOD.
 
 ### 2. Inline Hooking
 
@@ -99,4 +99,4 @@ Startup sequence:
 3. Creates the driver service registry and load the driver
 4. Show the main window
 
-![](/../main/assets/3.png)
+![](/../main/assets/3.gif)
