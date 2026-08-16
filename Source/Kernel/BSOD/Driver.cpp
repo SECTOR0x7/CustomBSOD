@@ -24,6 +24,7 @@ static HOOK_INFO g_StopCodeHookInfo = { NULL, NULL, 0, NULL, FALSE };
 static HOOK_INFO g_BgpClearScreenHookInfo = { NULL, NULL, 0, NULL, FALSE };
 static HOOK_INFO g_BgpTxtDisplayCharHookInfo = { NULL, NULL, 0, NULL, FALSE };
 static HOOK_INFO g_BcpDisplayCriticalHookInfo = { NULL, NULL, 0, NULL, FALSE };
+static HOOK_INFO g_BgpFwDisplayBugCheckScreenHookInfo = { NULL, NULL, 0, NULL, FALSE };
 static PVOID  g_Win7StopCodeHookTarget = NULL;
 static PUCHAR g_Win7StopCodeOrigCode = NULL;
 static SIZE_T g_Win7StopCodeOrigSize = 0;
@@ -41,6 +42,15 @@ typedef struct {
     ULONG Padding;
     PWSTR Buffer;
 } NTUNICODE_STRING, * PNTUNICODE_STRING;
+typedef struct {
+    ULONG H;
+    ULONG W;
+    ULONG BitsPerPixel;
+    ULONG Stride;
+    ULONG Flags;
+    ULONG Padding;
+    ULONG* PixelData;
+} GP_RECT_DESC, * PGP_RECT_DESC;
 typedef NTSTATUS(*_BcpDisplayCriticalString)(PNTUNICODE_STRING String, ULONG TextSize, ULONG64 Reserved, ULONG DisplayType);
 extern "C" NTKERNELAPI NTSTATUS InbvAcquireDisplayOwnership();
 BOOLEAN SafeReadMemory(PVOID Address, PVOID Buffer, SIZE_T Size)
@@ -627,10 +637,10 @@ VOID UninstallBgpClearScreenHook()
     g_BgpClearScreenHookInfo.Installed = FALSE;
     g_color = NULL;
 }
-NTSTATUS InstallBgpClearScreenHook(PVOID BgpClearScreenAddr, ULONG64 color)
+NTSTATUS InstallBgpFwDisplayBugCheckScreenHookgpClearScreenHook(PVOID BgpClearScreenAddr, ULONG64 color)
 {
     if (!BgpClearScreenAddr) return STATUS_INVALID_PARAMETER;
-    if (g_BgpClearScreenHookInfo.Installed) { UninstallBgpClearScreenHook(); return InstallBgpClearScreenHook(BgpClearScreenAddr, color); }
+    if (g_BgpClearScreenHookInfo.Installed) { UninstallBgpClearScreenHook(); return InstallBgpFwDisplayBugCheckScreenHookgpClearScreenHook(BgpClearScreenAddr, color); }
     PUCHAR tramp = (PUCHAR)ExAllocatePoolWithTag(NonPagedPoolExecute, 64u, 'pCgB');
     if (!tramp) return STATUS_INSUFFICIENT_RESOURCES;
     RtlZeroMemory(tramp, 64u);
@@ -695,10 +705,10 @@ VOID UninstallBgpTxtDisplayCharacterHook()
     g_tbcolor = NULL;
     g_tfcolor = NULL;
 }
-NTSTATUS InstallBgpTxtDisplayCharacterHook(PVOID BgpTxtDisplayCharacterAddr, ULONG backColor, ULONG foreColor)
+NTSTATUS InstallBgpFwDisplayBugCheckScreenHookgpTxtDisplayCharacterHook(PVOID BgpTxtDisplayCharacterAddr, ULONG backColor, ULONG foreColor)
 {
     if (!BgpTxtDisplayCharacterAddr) return STATUS_INVALID_PARAMETER;
-    if (g_BgpTxtDisplayCharHookInfo.Installed) { UninstallBgpTxtDisplayCharacterHook(); return InstallBgpTxtDisplayCharacterHook(BgpTxtDisplayCharacterAddr, backColor, foreColor); }
+    if (g_BgpTxtDisplayCharHookInfo.Installed) { UninstallBgpTxtDisplayCharacterHook(); return InstallBgpFwDisplayBugCheckScreenHookgpTxtDisplayCharacterHook(BgpTxtDisplayCharacterAddr, backColor, foreColor); }
     UCHAR* funcBytes = (UCHAR*)BgpTxtDisplayCharacterAddr;
     BOOLEAN is4cmd = DetectWindowsVersion() == WIN_8 || (DetectWindowsVersion() > WIN_10 && DetectWindowsVersion() <= WIN_11_26H1);
     ULONG patchSize;
@@ -801,7 +811,7 @@ VOID UninstallBcpDisplayCriticalStringHook()
     g_BcpDisplayCriticalHookInfo.Installed = FALSE;
     InstalledBlock = NULL;
 }
-NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr, BOOLEAN SkipPercentStrings, PWSTR Buffer, PWSTR* Buffers) {
+NTSTATUS InstallBgpFwDisplayBugCheckScreenHookcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr, BOOLEAN SkipPercentStrings, PWSTR Buffer, PWSTR* Buffers) {
     UCHAR ExpectedBytesWin8[20] = { 0x44, 0x89, 0x44, 0x24, 0x18, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8B, 0xEC };
     UCHAR ExpectedBytesWin10[16] = { 0x44, 0x89, 0x44, 0x24, 0x18, 0x48, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54 };
     UCHAR ExpectedBytesWin11[25] = { 0x44, 0x89, 0x44, 0x24, 0x18, 0x48, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8B, 0xEC };
@@ -867,8 +877,8 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
     if (InstalledBlock)
     {
         UninstallBcpDisplayCriticalStringHook();
-        Status = InstallBcpDisplayCriticalStringHook(g_BcpDisplayCriticalString, SkipPercentStrings, Buffer, Buffers);
-        if (Status == STATUS_INVALID_PARAMETER) Status = InstallBcpDisplayCriticalStringHook(g_BcpDisplayCriticalStringCentered, SkipPercentStrings, Buffer, Buffers);
+        Status = InstallBgpFwDisplayBugCheckScreenHookcpDisplayCriticalStringHook(g_BcpDisplayCriticalString, SkipPercentStrings, Buffer, Buffers);
+        if (Status == STATUS_INVALID_PARAMETER) Status = InstallBgpFwDisplayBugCheckScreenHookcpDisplayCriticalStringHook(g_BcpDisplayCriticalStringCentered, SkipPercentStrings, Buffer, Buffers);
         return Status;
     }
     if (RtlCompareMemory(BcpDisplayCriticalStringAddr, ExpectedBytes, ExpectedBytesSize) != ExpectedBytesSize) return STATUS_NOT_SUPPORTED;
@@ -1120,6 +1130,100 @@ InvalidGeneratedCode:
     ExFreePool(Block);
     return STATUS_INTERNAL_ERROR;
 }
+VOID UninstallBgpFwDisplayBugCheckScreenHook() {
+    if (!g_BgpFwDisplayBugCheckScreenHookInfo.Installed) return;
+    if (!g_BgpFwDisplayBugCheckScreenHookInfo.TargetAddress || !g_BgpFwDisplayBugCheckScreenHookInfo.OriginalCode || !g_BgpFwDisplayBugCheckScreenHookInfo.Trampoline) return;
+    NTSTATUS status = WriteMemory(g_BgpFwDisplayBugCheckScreenHookInfo.TargetAddress, g_BgpFwDisplayBugCheckScreenHookInfo.OriginalCode, g_BgpFwDisplayBugCheckScreenHookInfo.PatchSize);
+    if (!NT_SUCCESS(status)) return;
+    KeMemoryBarrier();
+    ExFreePool(g_BgpFwDisplayBugCheckScreenHookInfo.OriginalCode);
+    ExFreePool(g_BgpFwDisplayBugCheckScreenHookInfo.Trampoline);
+    RtlZeroMemory(&g_BgpFwDisplayBugCheckScreenHookInfo, sizeof(g_BgpFwDisplayBugCheckScreenHookInfo));
+}
+NTSTATUS InstallBgpFwDisplayBugCheckScreenHook(PVOID BgpFwDisplayBugCheckScreenAddr, PGP_RECT_DESC Data, SIZE_T PixelDataBytes) {
+    GP_RECT_DESC Snapshot;
+    UCHAR Probe[13];
+    UCHAR Original[15];
+    UCHAR Patch[15];
+    UCHAR Trampoline[83] = { 0x49, 0xBA, 0, 0, 0, 0, 0, 0, 0, 0, 0x4D, 0x8B, 0x1A, 0x4C, 0x89, 0x19, 0x4D, 0x8B, 0x5A, 0x08, 0x4C, 0x89, 0x59, 0x08, 0x4D, 0x8B, 0x5A, 0x10, 0x4C, 0x89, 0x59, 0x10, 0x4D, 0x8B, 0x5A, 0x18, 0x4C, 0x89, 0x59, 0x18, 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xD0, 0xB9, 0x86, 0, 0, 0, 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xD0, 0xFF, 0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    PUCHAR PatchAddress;
+    PUCHAR Block;
+    PGP_RECT_DESC StoredData;
+    SIZE_T DataOffset;
+    SIZE_T PixelOffset;
+    SIZE_T AllocationSize;
+    LONG Relative;
+    ULONG64 Value64;
+    PVOID DrawRectangleAddress;
+    PVOID SaveProgressAddress;
+    NTSTATUS Status;
+    if (!BgpFwDisplayBugCheckScreenAddr || !Data || PixelDataBytes > 0xCEA8) return STATUS_INVALID_PARAMETER;
+    if (g_BgpFwDisplayBugCheckScreenHookInfo.Installed) {
+        UninstallBgpFwDisplayBugCheckScreenHook();
+        return InstallBgpFwDisplayBugCheckScreenHook(BgpFwDisplayBugCheckScreenAddr, Data, PixelDataBytes);
+    }
+    __try { RtlCopyMemory(&Snapshot, Data, sizeof(Snapshot)); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return STATUS_INVALID_PARAMETER; }
+    if ((ULONG64)Snapshot.H * (ULONG64)Snapshot.W != 13225ULL || Snapshot.BitsPerPixel != 0x20 || Snapshot.Stride != 0xCEA4 || Snapshot.Flags != 0) return STATUS_INVALID_PARAMETER;
+    if (PixelDataBytes && (!Snapshot.PixelData || (ULONG_PTR)Snapshot.PixelData > (ULONG_PTR)-1 - PixelDataBytes)) return STATUS_INVALID_PARAMETER;
+    PatchAddress = (PUCHAR)BgpFwDisplayBugCheckScreenAddr + (DetectWindowsVersion() == WIN_10 ? 0x2A7 : 0x279);
+    ReadMemory(PatchAddress, Probe, sizeof(Probe));
+    if (Probe[0] != 0xE8) {
+        if (Probe[0] != 0x48 || Probe[1] != 0x8B || Probe[2] != 0x0D || Probe[7] != 0x48 || Probe[8] != 0x8D || Probe[9] != 0x54 || Probe[10] != 0x24 || Probe[11] != 0x38 || Probe[12] != 0xE8) return STATUS_NOT_SUPPORTED;
+        PatchAddress += 12;
+    }
+    ReadMemory(PatchAddress, Original, sizeof(Original));
+    if (Original[0] != 0xE8 || Original[5] != 0xB9 || Original[6] != 0x86 || Original[7] || Original[8] || Original[9] || Original[10] != 0xE8) return STATUS_NOT_SUPPORTED;
+    RtlCopyMemory(&Relative, Original + 1, sizeof(Relative));
+    DrawRectangleAddress = PatchAddress + 5 + Relative;
+    RtlCopyMemory(&Relative, Original + 11, sizeof(Relative));
+    SaveProgressAddress = PatchAddress + 15 + Relative;
+    DataOffset = (sizeof(Trampoline) + sizeof(ULONG64) - 1) & ~(sizeof(ULONG64) - 1);
+    PixelOffset = (DataOffset + sizeof(Snapshot) + sizeof(ULONG64) - 1) & ~(sizeof(ULONG64) - 1);
+    AllocationSize = PixelOffset + 0xCEA8;
+    Block = (PUCHAR)ExAllocatePool(NonPagedPoolExecute, AllocationSize);
+    if (!Block) return STATUS_INSUFFICIENT_RESOURCES;
+    RtlZeroMemory(Block, AllocationSize);
+    StoredData = (PGP_RECT_DESC)(Block + DataOffset);
+    RtlCopyMemory(StoredData, &Snapshot, sizeof(Snapshot));
+    StoredData->PixelData = (PULONG)(Block + PixelOffset);
+    __try { if (PixelDataBytes) RtlCopyMemory(StoredData->PixelData, Snapshot.PixelData, PixelDataBytes); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { ExFreePool(Block); return STATUS_INVALID_PARAMETER; }
+    Value64 = (ULONG64)StoredData;
+    RtlCopyMemory(Trampoline + 2, &Value64, sizeof(Value64));
+    Value64 = (ULONG64)DrawRectangleAddress;
+    RtlCopyMemory(Trampoline + 42, &Value64, sizeof(Value64));
+    Value64 = (ULONG64)SaveProgressAddress;
+    RtlCopyMemory(Trampoline + 59, &Value64, sizeof(Value64));
+    Value64 = (ULONG64)(PatchAddress + sizeof(Original));
+    RtlCopyMemory(Trampoline + 75, &Value64, sizeof(Value64));
+    RtlCopyMemory(Block, Trampoline, sizeof(Trampoline));
+    RtlFillMemory(Patch, sizeof(Patch), 0x90);
+    Patch[0] = 0xFF;
+    Patch[1] = 0x25;
+    Patch[2] = 0;
+    Patch[3] = 0;
+    Patch[4] = 0;
+    Patch[5] = 0;
+    Value64 = (ULONG64)Block;
+    RtlCopyMemory(Patch + 6, &Value64, sizeof(Value64));
+    KeMemoryBarrier();
+    Status = WriteMemory(PatchAddress, Patch, sizeof(Patch));
+    if (!NT_SUCCESS(Status)) { ExFreePool(Block); return Status; }
+    PUCHAR origCopy = (PUCHAR)ExAllocatePool(NonPagedPool, sizeof(Original));
+    if (!origCopy) {
+        ExFreePool(Block);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    RtlCopyMemory(origCopy, Original, sizeof(Original));
+    g_BgpFwDisplayBugCheckScreenHookInfo.TargetAddress = PatchAddress;
+    g_BgpFwDisplayBugCheckScreenHookInfo.OriginalCode = origCopy;
+    g_BgpFwDisplayBugCheckScreenHookInfo.PatchSize = sizeof(Original);
+    g_BgpFwDisplayBugCheckScreenHookInfo.Trampoline = Block;
+    g_BgpFwDisplayBugCheckScreenHookInfo.Installed = TRUE;
+    KeMemoryBarrier();
+    return STATUS_SUCCESS;
+}
 NTSTATUS CreateOrClose(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 {
     UNREFERENCED_PARAMETER(DeviceObject);
@@ -1129,7 +1233,7 @@ NTSTATUS CreateOrClose(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     return STATUS_SUCCESS;
 }
 VOID DisplayString(PWSTR String, ULONG TextSize, ULONG TbackColor, ULONG TforeColor, ULONG64 backgroundColor, ULONG X, ULONG Y, BOOLEAN ClearScreen) {
-    if (!g_BgpTxtDisplayCharHookInfo.Installed) InstallBgpTxtDisplayCharacterHook(g_BgpTxtDisplayCharacter, TbackColor, TforeColor);
+    if (!g_BgpTxtDisplayCharHookInfo.Installed) InstallBgpFwDisplayBugCheckScreenHookgpTxtDisplayCharacterHook(g_BgpTxtDisplayCharacter, TbackColor, TforeColor);
     else {
         *g_tbcolor = TbackColor;
         *g_tfcolor = TforeColor;
@@ -1630,13 +1734,13 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
             p = (CHAR*)buffer + 3;
             ULONG64 color;
             sscanf_s(p, "%llu", &color);
-            InstallBgpClearScreenHook(g_BgpClearScreen, color);
+            InstallBgpFwDisplayBugCheckScreenHookgpClearScreenHook(g_BgpClearScreen, color);
         }
         else if (p[0] == 'C' && p[1] == 'C' && p[2] == ' ') { //ChangeTextColor
             p = (CHAR*)buffer + 3;
             ULONG backColor, foreColor;
             sscanf_s(p, "%lu %lu", &backColor, &foreColor);
-            InstallBgpTxtDisplayCharacterHook(g_BgpTxtDisplayCharacter, backColor, foreColor);
+            InstallBgpFwDisplayBugCheckScreenHookgpTxtDisplayCharacterHook(g_BgpTxtDisplayCharacter, backColor, foreColor);
         }
         else if (p[0] == 'C' && p[1] == 'T' && p[2] == ' ') { // ChangeText
             p = (CHAR*)buffer + 3;
@@ -1718,7 +1822,7 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
                     }
                 }
                 else Buffer = NULL;
-                if (InstallBcpDisplayCriticalStringHook(g_BcpDisplayCriticalString, skipPercent, Buffer, Buffers) == STATUS_INVALID_PARAMETER) InstallBcpDisplayCriticalStringHook(g_BcpDisplayCriticalStringCentered, skipPercent, Buffer, Buffers);
+                if (InstallBgpFwDisplayBugCheckScreenHookcpDisplayCriticalStringHook(g_BcpDisplayCriticalString, skipPercent, Buffer, Buffers) == STATUS_INVALID_PARAMETER) InstallBgpFwDisplayBugCheckScreenHookcpDisplayCriticalStringHook(g_BcpDisplayCriticalStringCentered, skipPercent, Buffer, Buffers);
                 if (bufferArray) ExFreePoolWithTag(bufferArray, 'StcA');
             }
             if (args) {
@@ -1828,10 +1932,198 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
             CallbackRegistered = TRUE;
         }
         else if (p[0] == 'R' && p[1] == 'D') { //(Fake)RainbowBSOD
-            InstallBgpTxtDisplayCharacterHook(g_BgpTxtDisplayCharacter, 0x00000000, 0xFFFFFFFF);
-            InstallBgpClearScreenHook(g_BgpClearScreen, 0x0000000000000000);
+            InstallBgpFwDisplayBugCheckScreenHookgpTxtDisplayCharacterHook(g_BgpTxtDisplayCharacter, 0x00000000, 0xFFFFFFFF);
+            InstallBgpFwDisplayBugCheckScreenHookgpClearScreenHook(g_BgpClearScreen, 0x0000000000000000);
             HANDLE hThread = NULL;
             PsCreateSystemThread(&hThread, THREAD_ALL_ACCESS, nullptr, nullptr, nullptr, Thread, nullptr);
+        }
+        else if (p[0] == 'Q' && p[1] == 'R' && p[2] == ' ') { //QrCode
+            NTSTATUS status = STATUS_SUCCESS;
+            CHAR* cur = p + 3;
+            CHAR* end = (CHAR*)buffer + bufLen;
+            ULONG x = 0, y = 0;
+            const ULONG maxCount = 13225;
+            ULONG count = 0;
+            ULONG index = 0;
+            PULONG pixeldata = NULL;
+            while (cur < end && (*cur == ' ' || *cur == '\t' || *cur == '\r' || *cur == '\n')) ++cur;
+            if (cur >= end) {
+                Irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
+                Irp->IoStatus.Information = 0;
+                IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                return STATUS_INVALID_PARAMETER;
+            }
+            if (cur[0] == '0' && (cur[1] == 'x' || cur[1] == 'X')) cur += 2;
+            if (cur >= end || !((*cur >= '0' && *cur <= '9') || (*cur >= 'a' && *cur <= 'f') || (*cur >= 'A' && *cur <= 'F'))) {
+                Irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
+                Irp->IoStatus.Information = 0;
+                IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                return STATUS_INVALID_PARAMETER;
+            }
+            ULONG64 vx = 0;
+            while (cur < end && ((*cur >= '0' && *cur <= '9') || (*cur >= 'a' && *cur <= 'f') || (*cur >= 'A' && *cur <= 'F'))) {
+                CHAR c = *cur;
+                ULONG digit;
+                if (c >= '0' && c <= '9') digit = (ULONG)(c - '0');
+                else if (c >= 'a' && c <= 'f') digit = (ULONG)(c - 'a' + 10);
+                else digit = (ULONG)(c - 'A' + 10);
+                if (vx > (0xFFFFFFFFULL - digit) / 16) {
+                    Irp->IoStatus.Status = STATUS_INTEGER_OVERFLOW;
+                    Irp->IoStatus.Information = 0;
+                    IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                    return STATUS_INTEGER_OVERFLOW;
+                }
+                vx = (vx << 4) | digit;
+                ++cur;
+            }
+            x = (ULONG)vx;
+            while (cur < end && (*cur == ' ' || *cur == '\t' || *cur == '\r' || *cur == '\n')) ++cur;
+            if (cur >= end) {
+                Irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
+                Irp->IoStatus.Information = 0;
+                IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                return STATUS_INVALID_PARAMETER;
+            }
+            if (cur[0] == '0' && (cur[1] == 'x' || cur[1] == 'X')) cur += 2;
+            if (cur >= end || !((*cur >= '0' && *cur <= '9') || (*cur >= 'a' && *cur <= 'f') || (*cur >= 'A' && *cur <= 'F'))) {
+                Irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
+                Irp->IoStatus.Information = 0;
+                IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                return STATUS_INVALID_PARAMETER;
+            }
+            ULONG64 vy = 0;
+            while (cur < end && ((*cur >= '0' && *cur <= '9') || (*cur >= 'a' && *cur <= 'f') || (*cur >= 'A' && *cur <= 'F'))) {
+                CHAR c = *cur;
+                ULONG digit;
+                if (c >= '0' && c <= '9') digit = (ULONG)(c - '0');
+                else if (c >= 'a' && c <= 'f') digit = (ULONG)(c - 'a' + 10);
+                else digit = (ULONG)(c - 'A' + 10);
+                if (vy > (0xFFFFFFFFULL - digit) / 16) {
+                    Irp->IoStatus.Status = STATUS_INTEGER_OVERFLOW;
+                    Irp->IoStatus.Information = 0;
+                    IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                    return STATUS_INTEGER_OVERFLOW;
+                }
+                vy = (vy << 4) | digit;
+                ++cur;
+            }
+            y = (ULONG)vy;
+            if ((ULONG64)x * (ULONG64)y != maxCount) {
+                Irp->IoStatus.Status = STATUS_SUCCESS;
+                Irp->IoStatus.Information = 0;
+                IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                return STATUS_SUCCESS;
+            }
+            while (cur < end && (*cur == ' ' || *cur == '\t' || *cur == '\r' || *cur == '\n')) ++cur;
+            if (cur >= end || *cur != '{') {
+                Irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
+                Irp->IoStatus.Information = 0;
+                IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                return STATUS_INVALID_PARAMETER;
+            }
+            ++cur;
+            CHAR* scan = cur;
+            while (scan < end && *scan != '}') {
+                while (scan < end && (*scan == ' ' || *scan == '\t' || *scan == '\r' || *scan == '\n' || *scan == ',')) {
+                    ++scan;
+                }
+                if (scan >= end || *scan == '}') break;
+                CHAR* tokenStart = scan;
+                while (scan < end && *scan != ',' && *scan != '}' &&
+                    *scan != ' ' && *scan != '\t' && *scan != '\r' && *scan != '\n') {
+                    ++scan;
+                }
+                if (scan == tokenStart) {
+                    Irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
+                    Irp->IoStatus.Information = 0;
+                    IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                    return STATUS_INVALID_PARAMETER;
+                }
+                ++count;
+            }
+            if (count > maxCount) {
+                Irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
+                Irp->IoStatus.Information = 0;
+                IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                return STATUS_INVALID_PARAMETER;
+            }
+            pixeldata = (PULONG)ExAllocatePoolWithTag(NonPagedPool, maxCount * sizeof(ULONG), 'QrPt');
+            if (!pixeldata) {
+                Irp->IoStatus.Status = STATUS_INSUFFICIENT_RESOURCES;
+                Irp->IoStatus.Information = 0;
+                IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                return STATUS_INSUFFICIENT_RESOURCES;
+            }
+            RtlZeroMemory(pixeldata, maxCount * sizeof(ULONG));
+            scan = cur;
+            while (scan < end && *scan != '}' && index < count) {
+                while (scan < end && (*scan == ' ' || *scan == '\t' || *scan == '\r' || *scan == '\n' || *scan == ',')) {
+                    ++scan;
+                }
+                if (scan >= end || *scan == '}') break;
+                CHAR* tokenStart = scan;
+                while (scan < end && *scan != ',' && *scan != '}' &&
+                    *scan != ' ' && *scan != '\t' && *scan != '\r' && *scan != '\n') {
+                    ++scan;
+                }
+                if (scan == tokenStart) {
+                    status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
+                if ((scan - tokenStart) >= 2 &&
+                    tokenStart[0] == '0' &&
+                    (tokenStart[1] == 'x' || tokenStart[1] == 'X')) {
+                    tokenStart += 2;
+                }
+                if (tokenStart >= scan) {
+                    status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
+                ULONG64 value = 0;
+                BOOLEAN valid = TRUE;
+                for (CHAR* s = tokenStart; s < scan; ++s) {
+                    CHAR c = *s;
+                    ULONG digit;
+                    if (c >= '0' && c <= '9') digit = (ULONG)(c - '0');
+                    else if (c >= 'a' && c <= 'f') digit = (ULONG)(c - 'a' + 10);
+                    else if (c >= 'A' && c <= 'F') digit = (ULONG)(c - 'A' + 10);
+                    else {
+                        valid = FALSE;
+                        break;
+                    }
+                    if (value > (0xFFFFFFFFULL - digit) / 16) {
+                        valid = FALSE;
+                        break;
+                    }
+                    value = (value << 4) | digit;
+                }
+                if (!valid) {
+                    status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
+                pixeldata[index++] = (ULONG)value;
+            }
+            if (NT_SUCCESS(status) && index != count) {
+                status = STATUS_INVALID_PARAMETER;
+            }
+            if (!NT_SUCCESS(status)) {
+                if (pixeldata) {
+                    ExFreePoolWithTag(pixeldata, 'QrPt');
+                }
+                Irp->IoStatus.Status = status;
+                Irp->IoStatus.Information = 0;
+                IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                return status;
+            }
+            GP_RECT_DESC data;
+            data.H = x;
+            data.W = y;
+            data.BitsPerPixel = 0x20;
+            data.Stride = 0xCEA4;
+            data.Flags = 0;
+            data.Padding = 0;
+            data.PixelData = pixeldata;
+            InstallBgpFwDisplayBugCheckScreenHook(FindBgpFwDisplayBugCheckScreen(), &data, 52900);
         }
         else if (p[0] == 'B' && p[1] == 'C') { //BugCheck
             if (DetectWindowsVersion() == WIN_7) KeBugCheck(0x0000000000114514);
