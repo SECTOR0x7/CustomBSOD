@@ -91,8 +91,10 @@ Hooks are installed for:
 
 ### 3. User-Mode GUI
 
-The `CustomBSOD_v2` application provides a WinForms-based interface that:
+The `CustomBSOD_v2` application provides a WinForms-based interface.
 
+Startup sequence:
 1. Checks if **testsigning** mode is enabled (required for loading unsigned drivers)
 2. Extracts the embedded driver binary to disk
-3. Creates the driver service registry en
+3. Creates the driver service registry and load the driver
+4. Show the main window
