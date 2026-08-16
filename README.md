@@ -42,7 +42,7 @@ A Windows kernel driver and companion user-mode application that allow you to fu
 | **Manual BugCheck** | Trigger a controlled system crash for testing purposes |
 
 ![](/../main/assets/2.png)
-![](/../main/assets/3.png)
+
 ## Supported Windows Versions
 
 | OS Version | Build Range | Status |
@@ -98,3 +98,4 @@ Startup sequence:
 2. Extracts the embedded driver binary to disk
 3. Creates the driver service registry and load the driver
 4. Show the main window
+![](/../main/assets/3.png)
