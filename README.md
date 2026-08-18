@@ -35,6 +35,7 @@ A Windows kernel driver and companion user-mode application that allow you to fu
 | **Custom Stop Code Text** | Replace the default bugcheck stop code string with your own message ![](/../main/assets/sp.png) |
 | **Background Color** | Change the BSOD background to any color ![](/../main/assets/bgc.png) |
 | **Foreground/Text Color** | Set a custom text color for the crash screen ![](/../main/assets/ftc.png) |
+| **Change BSOD Texts** | Change the BSOD text ![](/../main/assets/cbt.png) |
 | **Modify QR code** | Modify the QR code to make it display your own image ![](/../main/assets/mqc.png) |
 | **Display strings** | Display your own strings on the screen ![](/../main/assets/ds.png) |
 | **Display images**| Display your own images on the screen ![](/../main/assets/di.png) |
