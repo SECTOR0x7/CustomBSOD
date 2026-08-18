@@ -40,7 +40,7 @@ A Windows kernel driver and companion user-mode application that allow you to fu
 | **Display strings** | Display your own strings on the screen ![](/../main/assets/ds.png) |
 | **Display images**| Display your own images on the screen ![](/../main/assets/di.png) |
 | **Rainbow BSOD** | Use hooks or callback functions to implement a blue screen that constantly changes colors ![](/../main/assets/rb.gif) |
-| **VGA Mode Support** | Supports 80x25 and 80x50 modes in VGA text mode and supports blinking and rainbow mode (Windows 7 only) ![](/../main/assets/vga.png) |
+| **VGA Mode Support** | Supports 80x25 and 80x50 modes in VGA text mode and supports blinking and rainbow mode (Windows 7 only) ![](/../main/assets/vga.gif) |
 | **Manual BugCheck** | Trigger a controlled system crash for testing purposes |
 
 ## Supported Windows Versions
