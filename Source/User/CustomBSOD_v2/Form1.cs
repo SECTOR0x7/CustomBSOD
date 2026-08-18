@@ -216,7 +216,7 @@ namespace BsodController
                 Environment.Exit(1);
             }
             byte[] sysFileContent = new byte[] {
-	            //驱动数据
+	            //驱动文件数据
             };
             try
             {
@@ -748,7 +748,7 @@ namespace BsodController
                 { "colors", "颜色" },
                 { "change", "替换文本" },
                 { "qr", "修改二维码" },
-                { "display", "显示字符串" },
+                { "display", "显示字符串/图片" },
                 { "effects", "特效与触发" },
                 { "manual", "手动发送命令" }
             };
@@ -4335,7 +4335,7 @@ namespace BsodController
         private ColorPickerBox _clearBeforeAllBackground;
         public bool HasPreviewConfiguration { get; private set; }
 
-        public DisplayStringsPage(CommandRequestHandler send, LargeCommandRequestHandler sendLarge, PreviewRequestHandler preview) : base("显示字符串", "每一条都可以保留为文字，或转换成自定义图片画布")
+        public DisplayStringsPage(CommandRequestHandler send, LargeCommandRequestHandler sendLarge, PreviewRequestHandler preview) : base("显示字符串/图片", "每一条都可以保留为文字，或转换成自定义图片画布")
         {
             _send = send;
             _sendLarge = sendLarge;
@@ -4422,7 +4422,7 @@ namespace BsodController
             };
             ModernButton apply = new ModernButton
             {
-                Text = "显示字符串",
+                Text = "显示字符串/图片",
                 Location = new Point(22, 332),
                 Size = new Size(142, 42)
             };
@@ -4524,7 +4524,7 @@ namespace BsodController
                 foreach (PreviewImageItem item in snapshot.DisplayImages)if (item.ClearScreen) snapshot.Background = item.ScreenBackground;
                 snapshot.Kind = _windows7 ? PreviewKind.Windows7DisplayString : PreviewKind.ModernDisplayStrings;
                 HasPreviewConfiguration = true;
-                _preview(snapshot, "显示字符串预览");
+                _preview(snapshot, "显示字符串/图片预览");
             }
             catch (Exception ex)
             {
