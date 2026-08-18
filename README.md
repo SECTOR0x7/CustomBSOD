@@ -43,8 +43,6 @@ A Windows kernel driver and companion user-mode application that allow you to fu
 | **VGA Mode Support** | Supports 80x25 and 80x50 modes in VGA text mode and supports blinking and rainbow mode (Windows 7 only) ![](/../main/assets/vga.png) |
 | **Manual BugCheck** | Trigger a controlled system crash for testing purposes |
 
-![](/../main/assets/2.png)
-
 ## Supported Windows Versions
 
 | OS Version | Build Range | Status |
