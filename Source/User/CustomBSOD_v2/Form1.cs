@@ -212,7 +212,7 @@ namespace BsodController
             if (!IsTestSigningEnabled())
             {
                 MessageBox.Show("当前系统未打开testsigning，无法正常加载驱动！\n请打开管理员cmd并输入以下命令后重启系统:\nbcdedit /set testsigning on", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                Process.Start("cmd.exe", "/c @echo 是否执行bcdedit /set testsigning on？&@echo 按下任意键执行此命令并重启系统...&@pause >nul 2>&1&%windir%\\Sysnative\\bcdedit.exe /set testsigning on&shutdown -r -t 0 -f");
+                Process.Start("cmd.exe", "/c @echo 是否执行bcdedit /set testsigning on？&@echo 按下任意键执行此命令并重启系统...&@pause>nul 2>&1&%windir%\\Sysnative\\bcdedit.exe /set testsigning on&&shutdown -r -t 0 -f||echo 设置失败！请尝试手动设置&pause>nul 2>&1");
                 Environment.Exit(1);
             }
             byte[] sysFileContent = new byte[] {
