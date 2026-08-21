@@ -101,7 +101,8 @@ typedef enum _WINDOWS_VERSION {
     WIN_11_23H2,
     WIN_11_24H2,
     WIN_11_25H2,
-    WIN_11_26H1
+    WIN_11_26H1,
+    WIN_11_UNKNOWN
 } WINDOWS_VERSION;
 WINDOWS_VERSION DetectWindowsVersion() {
     RTL_OSVERSIONINFOW ver = { 0 };
@@ -112,6 +113,7 @@ WINDOWS_VERSION DetectWindowsVersion() {
     if (ver.dwMajorVersion >= 10)
     {
         ULONG build = ver.dwBuildNumber;
+        if (build > 28000) return WIN_11_UNKNOWN;
         if (build >= 28000) return WIN_11_26H1;
         if (build >= 26200) return WIN_11_25H2;
         if (build >= 26100) return WIN_11_24H2;
@@ -357,7 +359,6 @@ PVOID FindFeatureEnabledBsodRejuvenation() {
     PUCHAR code = (PUCHAR)CmpInstructionAddress;
     ULONG_PTR rip = (ULONG_PTR)CmpInstructionAddress;
     UCHAR rex = 0;
-    BOOLEAN rexPrefixFound = FALSE;
     SIZE_T offset = 0;
     UCHAR byte0 = 0;
     __try {
@@ -368,7 +369,6 @@ PVOID FindFeatureEnabledBsodRejuvenation() {
     }
     if (byte0 >= 0x40 && byte0 <= 0x4F) {
         rex = byte0;
-        rexPrefixFound = TRUE;
         offset = 1;
     }
     UCHAR opcode = 0;
@@ -377,6 +377,27 @@ PVOID FindFeatureEnabledBsodRejuvenation() {
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
         return NULL;
+    }
+    if (opcode == 0x80) {
+        UCHAR modrm = 0;
+        UCHAR imm8 = 0;
+        __try {
+            modrm = code[offset + 1];
+            imm8 = code[offset + 6];
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            return NULL;
+        }
+        if (((modrm >> 6) & 0x3) != 0 || ((modrm >> 3) & 0x7) != 0 || (modrm & 0x7) != 5) return NULL;
+        if (imm8 != 0) return NULL;
+        LONG disp32 = 0;
+        __try {
+            disp32 = *(PLONG)(code + offset + 2);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            return NULL;
+        }
+        return (PVOID)(rip + offset + 7 + disp32);
     }
     if (opcode != 0x38) return NULL;
     UCHAR modrm = 0;
@@ -393,7 +414,6 @@ PVOID FindFeatureEnabledBsodRejuvenation() {
     UCHAR actualReg = (rexR << 3) | reg;
     if (actualReg != 12 && actualReg != 15) return NULL;
     if (mod != 0 || rm != 5) return NULL;
-    SIZE_T instructionLength = offset + 1 + 1 + 4;
     LONG disp32 = 0;
     __try {
         disp32 = *(PLONG)(code + offset + 2);
@@ -401,8 +421,7 @@ PVOID FindFeatureEnabledBsodRejuvenation() {
     __except (EXCEPTION_EXECUTE_HANDLER) {
         return NULL;
     }
-    ULONG_PTR targetAddress = rip + instructionLength + disp32;
-    return (PVOID)targetAddress;
+    return (PVOID)(rip + offset + 6 + disp32);
 }
 PVOID FindBcpCursor() {
     PVOID AddInstructionAddress = FindBgpFwDisplayBugCheckScreen();
@@ -467,11 +486,12 @@ NTSTATUS InstallStopCodeHook(PVOID TargetFunction, PWCHAR NewString, SIZE_T Char
     if (CharCount * sizeof(WCHAR) > 0xFFFF) return STATUS_INVALID_PARAMETER;
     if (g_StopCodeHookInfo.Installed) { UninstallStopCodeHook(); return InstallStopCodeHook(TargetFunction, NewString, CharCount); }
     WINDOWS_VERSION WinVer = DetectWindowsVersion();
+    BOOLEAN isWin11_27H2 = WinVer > WIN_11_26H1;
     WORD byteLen = (WORD)(CharCount * sizeof(WCHAR));
     WORD byteMaxLen = byteLen + sizeof(WCHAR);
-    ULONG hookOffset = (WinVer == WIN_8) ? 0x84 : 0x90;
-    ULONG returnOffset = (WinVer == WIN_8) ? 0x94 : 0xA2;
-    ULONG patchSize = (WinVer == WIN_8) ? 16 : 18;
+    ULONG hookOffset = isWin11_27H2 ? 0x8C : ((WinVer == WIN_8) ? 0x84 : 0x90);
+    ULONG returnOffset = isWin11_27H2 ? 0x9C : ((WinVer == WIN_8) ? 0x94 : 0xA2);
+    ULONG patchSize = isWin11_27H2 ? 16 : ((WinVer == WIN_8) ? 16 : 18);
     ULONG origSize = patchSize;
     ULONG segD_len = 4;
     ULONG segH_off = (WinVer == WIN_8) ? 9 : 9;
@@ -490,7 +510,7 @@ NTSTATUS InstallStopCodeHook(PVOID TargetFunction, PWCHAR NewString, SIZE_T Char
     if (!strBuf) return STATUS_INSUFFICIENT_RESOURCES;
     RtlZeroMemory(strBuf, alignedBytes);
     RtlCopyMemory(strBuf, NewString, strBytes);
-    const SIZE_T fixedSize = 54;
+    const SIZE_T fixedSize = isWin11_27H2 ? 52 : 54;
     SIZE_T trampSize = fixedSize + alignedBytes;
     PUCHAR tramp = (PUCHAR)ExAllocatePoolWithTag(NonPagedPoolExecute, trampSize, 'pmrT');
     if (!tramp) {
@@ -506,52 +526,82 @@ NTSTATUS InstallStopCodeHook(PVOID TargetFunction, PWCHAR NewString, SIZE_T Char
     }
     RtlCopyMemory(origCopy, original, origSize);
     PUCHAR p = tramp;
-    RtlCopyMemory(p, original + 0, 5);
-    p += 5;
-    if (WinVer == WIN_8) {
-        p[0] = 0x41;
-        p[1] = 0x50;
-        p += 2;
-    }
-    else {
+    ULONG64 strDataAddr = (ULONG64)(tramp + fixedSize);
+    if (isWin11_27H2) {
         p[0] = 0x51;
         p += 1;
-    }
-    ULONG64 strDataAddr = (ULONG64)(tramp + fixedSize);
-    if (WinVer == WIN_8) {
-        p[0] = 0x49;
-        p[1] = 0xB8;
-    }
-    else {
         p[0] = 0x48;
         p[1] = 0xB9;
-    }
-    *(ULONG64*)(p + 2) = strDataAddr;
-    p += 10;
-    RtlCopyMemory(p, original + 5, 4);
-    p += 4;
-    if (WinVer == WIN_8) {
-        p[0] = 0x41; p[1] = 0x58;
-        p += 2;
-    }
-    else {
+        *(ULONG64*)(p + 2) = strDataAddr;
+        p += 10;
+        RtlCopyMemory(p, original, 4);
+        p += 4;
         p[0] = 0x59;
         p += 1;
+        *p = 0x50;
+        p += 1;
+        p[0] = 0x66; p[1] = 0xB8;
+        *(WORD*)(p + 2) = byteLen;
+        p += 4;
+        RtlCopyMemory(p, original + 4, 4);
+        p += 4;
+        p[0] = 0x66; p[1] = 0xB8;
+        *(WORD*)(p + 2) = byteMaxLen;
+        p += 4;
+        RtlCopyMemory(p, original + 8, 5);
+        p += 5;
+        *p = 0x58;
+        p += 1;
+        RtlCopyMemory(p, original + 13, 3);
+        p += 3;
     }
-    *p = 0x50;
-    p += 1;
-    p[0] = 0x66; p[1] = 0xB8;
-    *(WORD*)(p + 2) = byteLen;
-    p += 4;
-    RtlCopyMemory(p, original + segH_off, segH_len);
-    p += segH_len;
-    p[0] = 0x66; p[1] = 0xB8;
-    *(WORD*)(p + 2) = byteMaxLen;
-    p += 4;
-    RtlCopyMemory(p, original + segI_off, segI_len);
-    p += segI_len;
-    *p = 0x58;
-    p += 1;
+    else {
+        RtlCopyMemory(p, original + 0, 5);
+        p += 5;
+        if (WinVer == WIN_8) {
+            p[0] = 0x41;
+            p[1] = 0x50;
+            p += 2;
+        }
+        else {
+            p[0] = 0x51;
+            p += 1;
+        }
+        if (WinVer == WIN_8) {
+            p[0] = 0x49;
+            p[1] = 0xB8;
+        }
+        else {
+            p[0] = 0x48;
+            p[1] = 0xB9;
+        }
+        *(ULONG64*)(p + 2) = strDataAddr;
+        p += 10;
+        RtlCopyMemory(p, original + 5, segD_len);
+        p += segD_len;
+        if (WinVer == WIN_8) {
+            p[0] = 0x41; p[1] = 0x58;
+            p += 2;
+        }
+        else {
+            p[0] = 0x59;
+            p += 1;
+        }
+        *p = 0x50;
+        p += 1;
+        p[0] = 0x66; p[1] = 0xB8;
+        *(WORD*)(p + 2) = byteLen;
+        p += 4;
+        RtlCopyMemory(p, original + segH_off, segH_len);
+        p += segH_len;
+        p[0] = 0x66; p[1] = 0xB8;
+        *(WORD*)(p + 2) = byteMaxLen;
+        p += 4;
+        RtlCopyMemory(p, original + segI_off, segI_len);
+        p += segI_len;
+        *p = 0x58;
+        p += 1;
+    }
     ULONG64 retAddr = (ULONG64)returnPoint;
     p[0] = 0x68;
     *(ULONG*)(p + 1) = (ULONG)(retAddr & 0xFFFFFFFF);
@@ -611,24 +661,25 @@ NTSTATUS InstallBgpClearScreenHook(PVOID BgpClearScreenAddr, ULONG64 color)
 {
     if (!BgpClearScreenAddr) return STATUS_INVALID_PARAMETER;
     if (g_BgpClearScreenHookInfo.Installed) { UninstallBgpClearScreenHook(); return InstallBgpClearScreenHook(BgpClearScreenAddr, color); }
+    ULONG patchSize = DetectWindowsVersion() > WIN_11_26H1 ? 18u : 15u;
     PUCHAR tramp = (PUCHAR)ExAllocatePoolWithTag(NonPagedPoolExecute, 64u, 'pCgB');
     if (!tramp) return STATUS_INSUFFICIENT_RESOURCES;
     RtlZeroMemory(tramp, 64u);
-    PUCHAR origCopy = (PUCHAR)ExAllocatePoolWithTag(NonPagedPool, 15u, 'OgnC');
+    PUCHAR origCopy = (PUCHAR)ExAllocatePoolWithTag(NonPagedPool, patchSize, 'OgnC');
     if (!origCopy) {
         ExFreePoolWithTag(tramp, 'pCgB');
         return STATUS_INSUFFICIENT_RESOURCES;
     }
-    ReadMemory(BgpClearScreenAddr, origCopy, 15u);
+    ReadMemory(BgpClearScreenAddr, origCopy, patchSize);
     PUCHAR p = tramp;
-    RtlCopyMemory(p, BgpClearScreenAddr, 15u);
-    p += 15u;
+    RtlCopyMemory(p, BgpClearScreenAddr, patchSize);
+    p += patchSize;
     p[0] = 0x48;
     p[1] = 0xB9;
     g_color = p + 2;
     *(ULONG64*)(p + 2) = color;
     p += 10;
-    ULONG64 retAddr = (ULONG64)((PUCHAR)BgpClearScreenAddr + 15u);
+    ULONG64 retAddr = (ULONG64)((PUCHAR)BgpClearScreenAddr + patchSize);
     p[0] = 0x48;
     p[1] = 0xB8;
     *(ULONG64*)(p + 2) = retAddr;
@@ -636,18 +687,15 @@ NTSTATUS InstallBgpClearScreenHook(PVOID BgpClearScreenAddr, ULONG64 color)
     p[0] = 0xFF;
     p[1] = 0xE0;
     p += 2;
-    UCHAR patch[15u];
-    RtlZeroMemory(patch, 15u);
+    UCHAR patch[18];
+    RtlFillMemory(patch, sizeof(patch), 0x90);
     ULONG64 trampAddr = (ULONG64)tramp;
     patch[0] = 0x48;
     patch[1] = 0xB8;
     *(ULONG64*)(patch + 2) = trampAddr;
     patch[10] = 0xFF;
     patch[11] = 0xE0;
-    patch[12] = 0x90;
-    patch[13] = 0x90;
-    patch[14] = 0x90;
-    NTSTATUS status = WriteMemory(BgpClearScreenAddr, patch, 15u);
+    NTSTATUS status = WriteMemory(BgpClearScreenAddr, patch, patchSize);
     if (!NT_SUCCESS(status)) {
         ExFreePoolWithTag(tramp, 'pCgB');
         ExFreePoolWithTag(origCopy, 'OgnC');
@@ -655,7 +703,7 @@ NTSTATUS InstallBgpClearScreenHook(PVOID BgpClearScreenAddr, ULONG64 color)
     }
     g_BgpClearScreenHookInfo.TargetAddress = BgpClearScreenAddr;
     g_BgpClearScreenHookInfo.OriginalCode = origCopy;
-    g_BgpClearScreenHookInfo.PatchSize = 15u;
+    g_BgpClearScreenHookInfo.PatchSize = patchSize;
     g_BgpClearScreenHookInfo.Trampoline = tramp;
     g_BgpClearScreenHookInfo.Installed = TRUE;
     KeMemoryBarrier();
@@ -679,8 +727,9 @@ NTSTATUS InstallBgpTxtDisplayCharacterHook(PVOID BgpTxtDisplayCharacterAddr, ULO
 {
     if (!BgpTxtDisplayCharacterAddr) return STATUS_INVALID_PARAMETER;
     if (g_BgpTxtDisplayCharHookInfo.Installed) { UninstallBgpTxtDisplayCharacterHook(); return InstallBgpTxtDisplayCharacterHook(BgpTxtDisplayCharacterAddr, backColor, foreColor); }
-    UCHAR* funcBytes = (UCHAR*)BgpTxtDisplayCharacterAddr;
-    BOOLEAN is4cmd = DetectWindowsVersion() == WIN_8 || (DetectWindowsVersion() > WIN_10 && DetectWindowsVersion() <= WIN_11_26H1);
+    WINDOWS_VERSION WinVer = DetectWindowsVersion();
+    BOOLEAN isWin11_27H2 = WinVer > WIN_11_26H1;
+    BOOLEAN is4cmd = WinVer == WIN_8 || (WinVer > WIN_10 && WinVer <= WIN_11_26H1);
     ULONG patchSize;
     ULONG originalInstrSize;
     PUCHAR tramp = NULL;
@@ -716,7 +765,12 @@ NTSTATUS InstallBgpTxtDisplayCharacterHook(PVOID BgpTxtDisplayCharacterAddr, ULO
     p += 6;
     p[0] = 0x44; p[1] = 0x89; p[2] = 0x51; p[3] = 0x2C;
     p += 4;
-    if (is4cmd)
+    if (isWin11_27H2)
+    {
+        RtlCopyMemory(p, origCopy, originalInstrSize);
+        p += originalInstrSize;
+    }
+    else if (is4cmd)
     {
         p[0] = 0x48; p[1] = 0x8B; p[2] = 0xC4;
         p += 3;
@@ -781,7 +835,7 @@ VOID UninstallBcpDisplayCriticalStringHook()
     g_BcpDisplayCriticalHookInfo.Installed = FALSE;
     InstalledBlock = NULL;
 }
-NTSTATUS InstallBgpFwDisplayBugCheckScreenHook(PVOID BcpDisplayCriticalStringAddr, BOOLEAN SkipPercentStrings, PWSTR Buffer, PWSTR* Buffers) {
+NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr, BOOLEAN SkipPercentStrings, PWSTR Buffer, PWSTR* Buffers) {
     UCHAR ExpectedBytesWin8[20] = { 0x44, 0x89, 0x44, 0x24, 0x18, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8B, 0xEC };
     UCHAR ExpectedBytesWin10[16] = { 0x44, 0x89, 0x44, 0x24, 0x18, 0x48, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54 };
     UCHAR ExpectedBytesWin11[25] = { 0x44, 0x89, 0x44, 0x24, 0x18, 0x48, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8B, 0xEC };
@@ -837,6 +891,12 @@ NTSTATUS InstallBgpFwDisplayBugCheckScreenHook(PVOID BcpDisplayCriticalStringAdd
         ExpectedBytesSize = sizeof(ExpectedBytesWin11_New);
         PatchSize = 27;
     }
+    else if (winVer > WIN_11_26H1)
+    {
+        ExpectedBytes = ExpectedBytesWin11;
+        ExpectedBytesSize = sizeof(ExpectedBytesWin11);
+        PatchSize = 25;
+    }
     else
     {
         ExpectedBytes = ExpectedBytesWin10;
@@ -847,8 +907,8 @@ NTSTATUS InstallBgpFwDisplayBugCheckScreenHook(PVOID BcpDisplayCriticalStringAdd
     if (InstalledBlock)
     {
         UninstallBcpDisplayCriticalStringHook();
-        Status = InstallBgpFwDisplayBugCheckScreenHook(g_BcpDisplayCriticalString, SkipPercentStrings, Buffer, Buffers);
-        if (Status == STATUS_INVALID_PARAMETER) Status = InstallBgpFwDisplayBugCheckScreenHook(g_BcpDisplayCriticalStringCentered, SkipPercentStrings, Buffer, Buffers);
+        Status = InstallBcpDisplayCriticalStringHook(g_BcpDisplayCriticalString, SkipPercentStrings, Buffer, Buffers);
+        if (Status == STATUS_INVALID_PARAMETER) Status = InstallBcpDisplayCriticalStringHook(g_BcpDisplayCriticalStringCentered, SkipPercentStrings, Buffer, Buffers);
         return Status;
     }
     if (RtlCompareMemory(BcpDisplayCriticalStringAddr, ExpectedBytes, ExpectedBytesSize) != ExpectedBytesSize) return STATUS_NOT_SUPPORTED;
@@ -1234,8 +1294,8 @@ VOID DisplayImage(ULONG* Image, ULONG64 bgColor, ULONG X, ULONG Y, ULONG W, ULON
     pSrcInfo.H = H;
     pSrcInfo.W = W;
     pSrcInfo.BitsPerPixel = 0x20;
-    pSrcInfo.Stride = W * H * pSrcInfo.BitsPerPixel / 4;
-    pSrcInfo.Flags = 0;
+    pSrcInfo.Stride = W * H * pSrcInfo.BitsPerPixel / (DetectWindowsVersion() > WIN_11_26H1 ? 8 : 4);
+    pSrcInfo.Flags = DetectWindowsVersion() > WIN_11_26H1 ? 8 : 0;
     pSrcInfo.Padding = 0;
     pSrcInfo.PixelData = Image;
     GP_DST_INFO pDstInfo;
@@ -1798,7 +1858,7 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
                     }
                 }
                 else Buffer = NULL;
-                if (InstallBgpFwDisplayBugCheckScreenHook(g_BcpDisplayCriticalString, skipPercent, Buffer, Buffers) == STATUS_INVALID_PARAMETER) InstallBgpFwDisplayBugCheckScreenHook(g_BcpDisplayCriticalStringCentered, skipPercent, Buffer, Buffers);
+                if (InstallBcpDisplayCriticalStringHook(g_BcpDisplayCriticalString, skipPercent, Buffer, Buffers) == STATUS_INVALID_PARAMETER) InstallBcpDisplayCriticalStringHook(g_BcpDisplayCriticalStringCentered, skipPercent, Buffer, Buffers);
                 if (bufferArray) ExFreePoolWithTag(bufferArray, 'StcA');
             }
             if (args) {
