@@ -15,6 +15,7 @@ PVOID g_BgpTxtDisplayCharacter = NULL;
 PVOID g_BcpDisplayCriticalString = NULL;
 PVOID g_BcpDisplayCriticalStringCentered = NULL;
 PVOID g_BgpGxDrawRectangle = NULL;
+PVOID BgInternal_0xF8 = NULL;
 typedef struct _HOOK_INFO {
     PVOID TargetAddress;
     PUCHAR OriginalCode;
@@ -57,6 +58,7 @@ typedef struct {
     UINT32  DstX;
     UINT32  DstY;
 } GP_DST_INFO, * PGP_DST_INFO;
+GP_RECT_DESC OriginalSrc = { 0, 0, 0, 0, 0, 0, NULL };
 typedef NTSTATUS(*_BcpDisplayCriticalString)(PNTUNICODE_STRING String, ULONG TextSize, ULONG64 Reserved, ULONG DisplayType);
 typedef NTSTATUS(*_BgpGxDrawRectangle)(PGP_RECT_DESC pSrcInfo, PGP_DST_INFO pDstInfo);
 extern "C" NTKERNELAPI NTSTATUS InbvAcquireDisplayOwnership();
@@ -346,7 +348,8 @@ PVOID FindBgpGxDrawRectangle() {
     UCHAR pattern4[] = { 0x48, 0x89, 0x5C, 0x24, 0x00, 0x55, 0x56, 0x57, 0x48, 0x81, 0xEC, 0x00, 0x00, 0x00, 0x00, 0x48, 0x8B, 0x05, 0x00, 0x00, 0x00, 0x00, 0x48, 0x33, 0xC4, 0x48, 0x89, 0x84, 0x24, 0x00, 0x00, 0x00, 0x00, 0x48, 0x8B, 0xEA, 0x48, 0x8B, 0xD9, 0x33, 0xD2, 0x48, 0x8D, 0x4C, 0x24, 0x00, 0x44, 0x8D, 0x42, 0x00, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x33, 0xFF, 0x48, 0x89, 0x7C, 0x24, 0x00, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x33, 0xF6, 0x39, 0x43, 0x00, 0x75, 0x00 };
     return FindFunction(pattern, sizeof(pattern), pattern2, sizeof(pattern2), pattern3, sizeof(pattern3), pattern4, sizeof(pattern4));
 }
-PVOID FindFeatureEnabledBsodRejuvenation() {
+PVOID FindFeatureEnabledBsodRejuvenation()
+{
     PVOID CmpInstructionAddress = FindKiDisplayBlueScreen();
     if (CmpInstructionAddress == NULL) return NULL;
     ULONG CmpOffset = 0;
@@ -361,50 +364,66 @@ PVOID FindFeatureEnabledBsodRejuvenation() {
     UCHAR rex = 0;
     SIZE_T offset = 0;
     UCHAR byte0 = 0;
-    __try {
+    __try
+    {
         byte0 = code[0];
     }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
         return NULL;
     }
-    if (byte0 >= 0x40 && byte0 <= 0x4F) {
+    if (byte0 >= 0x40 && byte0 <= 0x4F)
+    {
         rex = byte0;
         offset = 1;
     }
     UCHAR opcode = 0;
-    __try {
+    __try
+    {
         opcode = code[offset];
     }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
         return NULL;
     }
-    if (opcode == 0x80) {
+    if (opcode == 0x80)
+    {
         UCHAR modrm = 0;
         UCHAR imm8 = 0;
-        __try {
+        __try
+        {
             modrm = code[offset + 1];
             imm8 = code[offset + 6];
         }
-        __except (EXCEPTION_EXECUTE_HANDLER) {
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
             return NULL;
         }
-        if (((modrm >> 6) & 0x3) != 0 || ((modrm >> 3) & 0x7) != 0 || (modrm & 0x7) != 5) return NULL;
+        UCHAR mod = (modrm >> 6) & 0x3;
+        UCHAR reg = (modrm >> 3) & 0x7;
+        UCHAR rm = modrm & 0x7;
+        if (mod != 0 || reg != 7 || rm != 5) return NULL;
+        if ((rex & 0x04) != 0) return NULL;
         if (imm8 != 0) return NULL;
         LONG disp32 = 0;
-        __try {
+        __try
+        {
             disp32 = *(PLONG)(code + offset + 2);
         }
-        __except (EXCEPTION_EXECUTE_HANDLER) {
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
             return NULL;
         }
         return (PVOID)(rip + offset + 7 + disp32);
     }
     if (opcode != 0x38) return NULL;
     UCHAR modrm = 0;
-    __try {
+    __try
+    {
         modrm = code[offset + 1];
     }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
         return NULL;
     }
     UCHAR mod = (modrm >> 6) & 0x3;
@@ -415,10 +434,12 @@ PVOID FindFeatureEnabledBsodRejuvenation() {
     if (actualReg != 12 && actualReg != 15) return NULL;
     if (mod != 0 || rm != 5) return NULL;
     LONG disp32 = 0;
-    __try {
+    __try
+    {
         disp32 = *(PLONG)(code + offset + 2);
     }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
         return NULL;
     }
     return (PVOID)(rip + offset + 6 + disp32);
@@ -463,6 +484,75 @@ PVOID FindBcpCursor() {
     ULONG_PTR targetAddress = rip + instructionLength + disp32;
     ULONG_PTR bcpCursorBase = targetAddress - 0x8;
     return (PVOID)bcpCursorBase;
+}
+PVOID FindBgInternal_0xF8()
+{
+    PVOID InstructionAddress = FindBgpFwDisplayBugCheckScreen();
+    if (InstructionAddress == NULL) return NULL;
+    WINDOWS_VERSION winver = DetectWindowsVersion();
+    ULONG Offset;
+    if (winver == WIN_10) Offset = 0x2A7;
+    else if (winver == WIN_11_24H2) Offset = 0x279;
+    else if (winver == WIN_11_25H2 || winver == WIN_11_26H1) Offset = 0x273;
+    else Offset = 0x26D;
+    InstructionAddress = (PVOID)((ULONG_PTR)InstructionAddress + Offset);
+    PUCHAR code = (PUCHAR)InstructionAddress;
+    ULONG_PTR rip = (ULONG_PTR)InstructionAddress;
+    UCHAR rex = 0;
+    SIZE_T prefixLength = 0;
+    UCHAR firstByte = 0;
+    __try
+    {
+        firstByte = code[0];
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return NULL;
+    }
+    if (firstByte >= 0x40 && firstByte <= 0x4F)
+    {
+        rex = firstByte;
+        prefixLength = 1;
+    }
+    UCHAR opcode = 0;
+    __try
+    {
+        opcode = code[prefixLength];
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return NULL;
+    }
+    if (opcode != 0x8B) return NULL;
+    UCHAR modrm = 0;
+    __try
+    {
+        modrm = code[prefixLength + 1];
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return NULL;
+    }
+    UCHAR mod = (modrm >> 6) & 0x3;
+    UCHAR reg = (modrm >> 3) & 0x7;
+    UCHAR rm = modrm & 0x7;
+    UCHAR rexR = (rex >> 2) & 1;
+    UCHAR actualReg = (rexR << 3) | reg;
+    if (actualReg != 1) return NULL;
+    if (mod != 0 || rm != 5) return NULL;
+    if (((rex >> 3) & 1) != 1) return NULL;
+    LONG disp32 = 0;
+    __try
+    {
+        disp32 = *(PLONG)(code + prefixLength + 2);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return NULL;
+    }
+    SIZE_T instructionLength = prefixLength + 6;
+    ULONG_PTR targetAddress = rip + instructionLength + disp32;
+    return (PVOID)targetAddress;
 }
 PVOID AllocateExecutableMemory(SIZE_T Size) {
     PVOID buffer = ExAllocatePoolWithTag(NonPagedPoolExecute, Size, 'pmrT');
@@ -872,7 +962,9 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
     PUCHAR stringDataPtr;
     if (!BcpDisplayCriticalStringAddr || !Buffer) return STATUS_INVALID_PARAMETER;
     winVer = DetectWindowsVersion();
-    if (winVer > WIN_11_24H2 && BcpDisplayCriticalStringAddr == g_BcpDisplayCriticalString) return STATUS_INVALID_PARAMETER;
+    ULONG New = 0;
+    ReadMemory(FindFeatureEnabledBsodRejuvenation(), &New, sizeof(ULONG));
+    if (New == 1 && BcpDisplayCriticalStringAddr == g_BcpDisplayCriticalString) return STATUS_INVALID_PARAMETER;
     if (winVer == WIN_8)
     {
         ExpectedBytes = ExpectedBytesWin8;
@@ -1187,16 +1279,17 @@ NTSTATUS InstallBgpFwDisplayBugCheckScreenHook(PVOID BgpFwDisplayBugCheckScreenA
     PVOID DrawRectangleAddress;
     PVOID SaveProgressAddress;
     NTSTATUS Status;
-    if (!BgpFwDisplayBugCheckScreenAddr || !Data || PixelDataBytes > 0xCEA8) return STATUS_INVALID_PARAMETER;
+    if (!BgpFwDisplayBugCheckScreenAddr || !Data || PixelDataBytes > OriginalSrc.Stride + sizeof(ULONG)) return STATUS_INVALID_PARAMETER;
     if (g_BgpFwDisplayBugCheckScreenHookInfo.Installed) {
         UninstallBgpFwDisplayBugCheckScreenHook();
         return InstallBgpFwDisplayBugCheckScreenHook(BgpFwDisplayBugCheckScreenAddr, Data, PixelDataBytes);
     }
     __try { RtlCopyMemory(&Snapshot, Data, sizeof(Snapshot)); }
     __except (EXCEPTION_EXECUTE_HANDLER) { return STATUS_INVALID_PARAMETER; }
-    if ((ULONG64)Snapshot.H * (ULONG64)Snapshot.W != 13225ULL || Snapshot.BitsPerPixel != 0x20 || Snapshot.Stride != 0xCEA4 || Snapshot.Flags != 0) return STATUS_INVALID_PARAMETER;
+    if ((ULONG64)Snapshot.H * (ULONG64)Snapshot.W != (ULONG64)OriginalSrc.W * (ULONG64)OriginalSrc.H || Snapshot.BitsPerPixel != 0x20 || Snapshot.Stride != OriginalSrc.Stride || Snapshot.Flags != 0) return STATUS_INVALID_PARAMETER;
     if (PixelDataBytes && (!Snapshot.PixelData || (ULONG_PTR)Snapshot.PixelData > (ULONG_PTR)-1 - PixelDataBytes)) return STATUS_INVALID_PARAMETER;
-    PatchAddress = (PUCHAR)BgpFwDisplayBugCheckScreenAddr + (DetectWindowsVersion() == WIN_10 ? 0x2A7 : 0x279);
+    WINDOWS_VERSION winver = DetectWindowsVersion();
+    PatchAddress = (PUCHAR)BgpFwDisplayBugCheckScreenAddr + (winver == WIN_10 ? 0x2A7 : (winver == WIN_11_24H2 ? 0x279 : (winver == WIN_11_25H2 || winver == WIN_11_26H1 ? 0x273 : 0x26D)));
     ReadMemory(PatchAddress, Probe, sizeof(Probe));
     if (Probe[0] != 0xE8) {
         if (Probe[0] != 0x48 || Probe[1] != 0x8B || Probe[2] != 0x0D || Probe[7] != 0x48 || Probe[8] != 0x8D || Probe[9] != 0x54 || Probe[10] != 0x24 || Probe[11] != 0x38 || Probe[12] != 0xE8) return STATUS_NOT_SUPPORTED;
@@ -1210,7 +1303,7 @@ NTSTATUS InstallBgpFwDisplayBugCheckScreenHook(PVOID BgpFwDisplayBugCheckScreenA
     SaveProgressAddress = PatchAddress + 15 + Relative;
     DataOffset = (sizeof(Trampoline) + sizeof(ULONG64) - 1) & ~(sizeof(ULONG64) - 1);
     PixelOffset = (DataOffset + sizeof(Snapshot) + sizeof(ULONG64) - 1) & ~(sizeof(ULONG64) - 1);
-    AllocationSize = PixelOffset + 0xCEA8;
+    AllocationSize = PixelOffset + OriginalSrc.Stride + sizeof(ULONG);
     Block = (PUCHAR)ExAllocatePool(NonPagedPoolExecute, AllocationSize);
     if (!Block) return STATUS_INSUFFICIENT_RESOURCES;
     RtlZeroMemory(Block, AllocationSize);
@@ -1253,6 +1346,16 @@ NTSTATUS InstallBgpFwDisplayBugCheckScreenHook(PVOID BgpFwDisplayBugCheckScreenA
     g_BgpFwDisplayBugCheckScreenHookInfo.Installed = TRUE;
     KeMemoryBarrier();
     return STATUS_SUCCESS;
+}
+VOID BackupOriginalGP_RECT_DESC()
+{
+    PGP_RECT_DESC Data = *(PGP_RECT_DESC*)BgInternal_0xF8;
+    __try {
+        RtlCopyMemory(&OriginalSrc, Data, sizeof(GP_RECT_DESC));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        RtlZeroMemory(&OriginalSrc, sizeof(GP_RECT_DESC));
+    }
 }
 NTSTATUS CreateOrClose(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 {
@@ -2035,7 +2138,7 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
             CHAR* cur = p + 3;
             CHAR* end = (CHAR*)buffer + bufLen;
             ULONG x = 0, y = 0;
-            const ULONG maxCount = 13225;
+            ULONG maxCount = OriginalSrc.W * OriginalSrc.H;
             ULONG count = 0;
             ULONG index = 0;
             PULONG pixeldata = NULL;
@@ -2196,9 +2299,7 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
                 }
                 pixeldata[index++] = (ULONG)value;
             }
-            if (NT_SUCCESS(status) && index != count) {
-                status = STATUS_INVALID_PARAMETER;
-            }
+            if (NT_SUCCESS(status) && index != count) status = STATUS_INVALID_PARAMETER;
             if (!NT_SUCCESS(status)) {
                 if (pixeldata) {
                     ExFreePoolWithTag(pixeldata, 'QrPt');
@@ -2212,11 +2313,17 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
             data.H = x;
             data.W = y;
             data.BitsPerPixel = 0x20;
-            data.Stride = 0xCEA4;
+            data.Stride = OriginalSrc.Stride;
             data.Flags = 0;
             data.Padding = 0;
             data.PixelData = pixeldata;
-            InstallBgpFwDisplayBugCheckScreenHook(FindBgpFwDisplayBugCheckScreen(), &data, 52900);
+            InstallBgpFwDisplayBugCheckScreenHook(FindBgpFwDisplayBugCheckScreen(), &data, maxCount * sizeof(ULONG));
+        }
+        else if (p[0] == 'F' && p[1] == 'R' && p[2] == ' ') {
+            p = (CHAR*)buffer + 3;
+            UCHAR BSOD = 0;
+            sscanf_s(p, "%hhx", &BSOD);
+            WriteMemory(FindFeatureEnabledBsodRejuvenation(), &BSOD, 1);
         }
         else if (p[0] == 'B' && p[1] == 'C') { //BugCheck
             if (DetectWindowsVersion() == WIN_7) KeBugCheck(0x0000000000114514);
@@ -2228,6 +2335,18 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
     IoCompleteRequest(Irp, IO_NO_INCREMENT);
     return STATUS_SUCCESS;
 }
+NTSTATUS Read(PDEVICE_OBJECT DeviceObject, PIRP Irp)
+{
+    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+    ULONG bytesToRead = stack->Parameters.Read.Length;
+    PVOID systemBuffer = Irp->AssociatedIrp.SystemBuffer;
+    ULONG bytesToCopy = min(bytesToRead, (ULONG)sizeof(GP_RECT_DESC));
+    if (bytesToCopy > 0) RtlCopyMemory(systemBuffer, &OriginalSrc, bytesToCopy);
+    Irp->IoStatus.Status = STATUS_SUCCESS;
+    Irp->IoStatus.Information = bytesToCopy;
+    IoCompleteRequest(Irp, IO_NO_INCREMENT);
+    return STATUS_SUCCESS;
+}
 extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) {
     UNREFERENCED_PARAMETER(RegistryPath);
     g_BgpClearScreen = FindBgpClearScreen();
@@ -2235,6 +2354,8 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
     g_BcpDisplayCriticalString = FindBcpDisplayCriticalString();
     g_BcpDisplayCriticalStringCentered = FindBcpDisplayCriticalStringCentered();
     g_BgpGxDrawRectangle = FindBgpGxDrawRectangle();
+    BgInternal_0xF8 = FindBgInternal_0xF8();
+    BackupOriginalGP_RECT_DESC();
     PHYSICAL_ADDRESS physAddr;
     physAddr.QuadPart = 0xB8000;
     pVGABuffer = (PUCHAR)MmMapIoSpace(physAddr, 8000, MmNonCached);
@@ -2247,6 +2368,7 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
         DriverObject->MajorFunction[IRP_MJ_CREATE] = CreateOrClose;
         DriverObject->MajorFunction[IRP_MJ_CLOSE] = CreateOrClose;
         DriverObject->MajorFunction[IRP_MJ_WRITE] = Write;
+        DriverObject->MajorFunction[IRP_MJ_READ] = Read;
         pDev->Flags |= DO_BUFFERED_IO;
     }
     return STATUS_SUCCESS;
