@@ -492,8 +492,8 @@ PVOID FindBgInternal_0xF8()
     WINDOWS_VERSION winver = DetectWindowsVersion();
     ULONG Offset;
     if (winver == WIN_10) Offset = 0x2A7;
-    else if (winver == WIN_11_24H2) Offset = 0x279;
-    else if (winver == WIN_11_25H2 || winver == WIN_11_26H1) Offset = 0x273;
+    else if (winver == WIN_11_24H2 || winver == WIN_11_26H1) Offset = 0x279;
+    else if (winver == WIN_11_25H2) Offset = 0x273;
     else Offset = 0x26D;
     InstructionAddress = (PVOID)((ULONG_PTR)InstructionAddress + Offset);
     PUCHAR code = (PUCHAR)InstructionAddress;
