@@ -25,7 +25,7 @@ typedef struct _HOOK_INFO {
 } HOOK_INFO, * PHOOK_INFO;
 static HOOK_INFO g_StopCodeHookInfo = { NULL, NULL, 0, NULL, FALSE };
 static HOOK_INFO g_BgpClearScreenHookInfo = { NULL, NULL, 0, NULL, FALSE };
-static HOOK_INFO g_BgpTxtDisplayCharHookInfo = { NULL, NULL, 0, NULL, FALSE };
+static HOOK_INFO g_BgpTxtDisplayCharacterHookInfo = { NULL, NULL, 0, NULL, FALSE };
 static HOOK_INFO g_BcpDisplayCriticalStringHookInfo = { NULL, NULL, 0, NULL, FALSE };
 static HOOK_INFO g_BgpFwDisplayBugCheckScreenHookInfo = { NULL, NULL, 0, NULL, FALSE };
 static PVOID  g_Win7StopCodeHookTarget = NULL;
@@ -788,22 +788,22 @@ NTSTATUS InstallBgpClearScreenHook(PVOID BgpClearScreenAddr, ULONG64 color)
 }
 VOID UninstallBgpTxtDisplayCharacterHook()
 {
-    if (!g_BgpTxtDisplayCharHookInfo.Installed) return;
+    if (!g_BgpTxtDisplayCharacterHookInfo.Installed) return;
     KIRQL oldIrql;
     KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
-    WriteMemory(g_BgpTxtDisplayCharHookInfo.TargetAddress, g_BgpTxtDisplayCharHookInfo.OriginalCode, g_BgpTxtDisplayCharHookInfo.PatchSize);
+    WriteMemory(g_BgpTxtDisplayCharacterHookInfo.TargetAddress, g_BgpTxtDisplayCharacterHookInfo.OriginalCode, g_BgpTxtDisplayCharacterHookInfo.PatchSize);
     KeLowerIrql(oldIrql);
-    ExFreePoolWithTag(g_BgpTxtDisplayCharHookInfo.Trampoline, 'cDgB');
-    ExFreePoolWithTag(g_BgpTxtDisplayCharHookInfo.OriginalCode, 'OgnT');
-    RtlZeroMemory(&g_BgpTxtDisplayCharHookInfo, sizeof(g_BgpTxtDisplayCharHookInfo));
-    g_BgpTxtDisplayCharHookInfo.Installed = FALSE;
+    ExFreePoolWithTag(g_BgpTxtDisplayCharacterHookInfo.Trampoline, 'cDgB');
+    ExFreePoolWithTag(g_BgpTxtDisplayCharacterHookInfo.OriginalCode, 'OgnT');
+    RtlZeroMemory(&g_BgpTxtDisplayCharacterHookInfo, sizeof(g_BgpTxtDisplayCharacterHookInfo));
+    g_BgpTxtDisplayCharacterHookInfo.Installed = FALSE;
     g_tbcolor = NULL;
     g_tfcolor = NULL;
 }
 NTSTATUS InstallBgpTxtDisplayCharacterHook(PVOID BgpTxtDisplayCharacterAddr, ULONG backColor, ULONG foreColor)
 {
     if (!BgpTxtDisplayCharacterAddr) return STATUS_INVALID_PARAMETER;
-    if (g_BgpTxtDisplayCharHookInfo.Installed) { UninstallBgpTxtDisplayCharacterHook(); return InstallBgpTxtDisplayCharacterHook(BgpTxtDisplayCharacterAddr, backColor, foreColor); }
+    if (g_BgpTxtDisplayCharacterHookInfo.Installed) { UninstallBgpTxtDisplayCharacterHook(); return InstallBgpTxtDisplayCharacterHook(BgpTxtDisplayCharacterAddr, backColor, foreColor); }
     WINDOWS_VERSION WinVer = DetectWindowsVersion();
     BOOLEAN isWin11_27H2 = WinVer > WIN_11_26H1;
     BOOLEAN is4cmd = WinVer == WIN_8 || (WinVer > WIN_10 && WinVer <= WIN_11_26H1);
@@ -891,11 +891,11 @@ NTSTATUS InstallBgpTxtDisplayCharacterHook(PVOID BgpTxtDisplayCharacterAddr, ULO
         ExFreePoolWithTag(origCopy, 'OgnT');
         return status;
     }
-    g_BgpTxtDisplayCharHookInfo.TargetAddress = BgpTxtDisplayCharacterAddr;
-    g_BgpTxtDisplayCharHookInfo.OriginalCode = origCopy;
-    g_BgpTxtDisplayCharHookInfo.PatchSize = patchSize;
-    g_BgpTxtDisplayCharHookInfo.Trampoline = tramp;
-    g_BgpTxtDisplayCharHookInfo.Installed = TRUE;
+    g_BgpTxtDisplayCharacterHookInfo.TargetAddress = BgpTxtDisplayCharacterAddr;
+    g_BgpTxtDisplayCharacterHookInfo.OriginalCode = origCopy;
+    g_BgpTxtDisplayCharacterHookInfo.PatchSize = patchSize;
+    g_BgpTxtDisplayCharacterHookInfo.Trampoline = tramp;
+    g_BgpTxtDisplayCharacterHookInfo.Installed = TRUE;
     KeMemoryBarrier();
     return STATUS_SUCCESS;
 }
@@ -1353,7 +1353,7 @@ NTSTATUS CreateOrClose(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     return STATUS_SUCCESS;
 }
 VOID DisplayString(PWSTR String, ULONG TextSize, ULONG TbackColor, ULONG TforeColor, ULONG64 backgroundColor, ULONG X, ULONG Y, BOOLEAN ClearScreen) {
-    if (!g_BgpTxtDisplayCharHookInfo.Installed) InstallBgpTxtDisplayCharacterHook(g_BgpTxtDisplayCharacter, TbackColor, TforeColor);
+    if (!g_BgpTxtDisplayCharacterHookInfo.Installed) InstallBgpTxtDisplayCharacterHook(g_BgpTxtDisplayCharacter, TbackColor, TforeColor);
     else {
         *g_tbcolor = TbackColor;
         *g_tfcolor = TforeColor;
