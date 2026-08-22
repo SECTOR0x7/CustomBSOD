@@ -78,6 +78,8 @@ namespace BsodController
             return version.Length >= 3 && version[0] >= 10 && version[2] > 26100;
         }
 
+        public static bool ForceWindows10BlueScreenEffect { get; set; }
+
         public static bool IsQrCustomizationSupported()
         {
             int[] version = GetSystemVersion();
@@ -316,6 +318,7 @@ namespace BsodController
     internal sealed class DeviceClient
     {
         public const string DevicePath = @"\\.\BSOD";
+        private const uint GenericRead = 0x80000000;
         private const uint GenericWrite = 0x40000000;
         private const uint FileShareRead = 0x00000001;
         private const uint FileShareWrite = 0x00000002;
@@ -332,11 +335,27 @@ namespace BsodController
 
         [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool ReadFile(IntPtr hFile, out GP_RECT_DESC lpBuffer, uint nNumberOfBytesToRead, out uint lpNumberOfBytesRead, IntPtr lpOverlapped);
+
+        [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool CloseHandle(IntPtr hObject);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct GP_RECT_DESC
+        {
+            public uint H;
+            public uint W;
+            public uint BitsPerPixel;
+            public uint Stride;
+            public uint Flags;
+            public uint Padding;
+            public IntPtr PixelData;
+        }
 
         public void Probe()
         {
-            IntPtr handle = OpenDevice();
+            IntPtr handle = OpenDevice(GenericWrite);
             CloseHandle(handle);
         }
 
@@ -344,7 +363,7 @@ namespace BsodController
         {
             if (string.IsNullOrWhiteSpace(command)) throw new ArgumentException("命令不能为空", "command");
             byte[] data = Encoding.Default.GetBytes(command + "\0");
-            IntPtr handle = OpenDevice();
+            IntPtr handle = OpenDevice(GenericRead | GenericWrite);
             try
             {
                 uint bytesWritten;
@@ -361,9 +380,32 @@ namespace BsodController
             }
         }
 
-        private static IntPtr OpenDevice()
+        public GP_RECT_DESC ReadRectangleDescription()
         {
-            IntPtr handle = CreateFileW(DevicePath, GenericWrite, FileShareRead | FileShareWrite, IntPtr.Zero, OpenExisting, FileAttributeNormal, IntPtr.Zero);
+            IntPtr handle = OpenDevice(GenericWrite | GenericRead);
+            try
+            {
+                GP_RECT_DESC description;
+                uint expectedSize = checked((uint)Marshal.SizeOf(typeof(GP_RECT_DESC)));
+                uint bytesRead;
+                bool success = ReadFile(handle, out description, expectedSize, out bytesRead, IntPtr.Zero);
+                if (!success)
+                {
+                    int error = Marshal.GetLastWin32Error();
+                    throw new Win32Exception(error, "ReadFile 读取 GP_RECT_DESC 失败");
+                }
+                if (bytesRead < expectedSize) throw new InvalidOperationException("ReadFile 返回的 GP_RECT_DESC 数据不完整");
+                return description;
+            }
+            finally
+            {
+                CloseHandle(handle);
+            }
+        }
+
+        private static IntPtr OpenDevice(uint desiredAccess)
+        {
+            IntPtr handle = CreateFileW(DevicePath, desiredAccess, FileShareRead | FileShareWrite, IntPtr.Zero, OpenExisting, FileAttributeNormal, IntPtr.Zero);
             if (handle == InvalidHandleValue)
             {
                 int error = Marshal.GetLastWin32Error();
@@ -376,6 +418,7 @@ namespace BsodController
     internal delegate bool CommandRequestHandler(string command, string successMessage);
     internal delegate bool LargeCommandRequestHandler(string command, string confirmationMessage, string successMessage);
     internal delegate void PreviewRequestHandler(PreviewSnapshot snapshot, string title);
+    internal delegate DeviceClient.GP_RECT_DESC RectDescriptionRequestHandler();
 
     internal sealed class ModernButton : Button
     {
@@ -674,8 +717,10 @@ namespace BsodController
         private readonly DeviceClient _client = new DeviceClient();
         private readonly Dictionary<string, PageView> _pages = new Dictionary<string, PageView>();
         private readonly Dictionary<string, ModernButton> _navButtons = new Dictionary<string, ModernButton>();
+        private readonly List<ModernButton> _navButtonOrder = new List<ModernButton>();
         private readonly bool _windows7 = Program.IsWindows7();
         private readonly bool _qrSupported = Program.IsQrCustomizationSupported();
+        private readonly bool _blueScreenStyleSwitchSupported = Program.IsWindows11NewBlueScreen();
         private Panel _content;
         private Label _statusLabel;
         private Panel _statusDot;
@@ -699,6 +744,7 @@ namespace BsodController
         private bool _windows7ColorsApplied;
         private Color _appliedWindows7ForegroundColor;
         private Color _appliedWindows7BackgroundColor;
+        private ModernButton _blueScreenStyleButton;
 
         public MainForm()
         {
@@ -757,7 +803,8 @@ namespace BsodController
             {
                 string key = nav[i, 0];
                 if (_windows7 && key == "change") continue;
-                if (!_qrSupported && key == "qr") continue;
+                if (!_qrSupported && !_blueScreenStyleSwitchSupported && key == "qr") continue;
+                bool initiallyVisible = key != "qr" || _qrSupported;
                 ModernButton button = new ModernButton
                 {
                     Text = nav[i, 1],
@@ -766,7 +813,8 @@ namespace BsodController
                     Location = new Point(14, y),
                     Size = new Size(202, 43),
                     BaseColor = Ui.Sidebar,
-                    Tag = key
+                    Tag = key,
+                    Visible = initiallyVisible
                 };
                 button.Click += delegate (object sender, EventArgs e)
                 {
@@ -774,7 +822,8 @@ namespace BsodController
                 };
                 sidebar.Controls.Add(button);
                 _navButtons.Add(key, button);
-                y += 50;
+                _navButtonOrder.Add(button);
+                if (initiallyVisible) y += 50;
             }
 
             Panel statusArea = new Panel { Dock = DockStyle.Bottom, Height = 78, BackColor = Ui.Sidebar };
@@ -834,9 +883,9 @@ namespace BsodController
                 _changeTextPage = new ChangeTextPage(TrySendCommand, ShowPreview);
                 AddPage("change", _changeTextPage);
             }
-            if (_qrSupported)
+            if (_qrSupported || _blueScreenStyleSwitchSupported)
             {
-                _qrEditorPage = new QrEditorPage(TrySendLargeCommand);
+                _qrEditorPage = new QrEditorPage(TrySendLargeCommand, _client.ReadRectangleDescription);
                 AddPage("qr", _qrEditorPage);
             }
             _displayStringsPage = new DisplayStringsPage(TrySendCommand, TrySendLargeCommand, ShowPreview);
@@ -1092,7 +1141,55 @@ namespace BsodController
             };
             crash.Controls.Add(allPreview);
             page.AddCard(crash);
+
+            if (_blueScreenStyleSwitchSupported)
+            {
+                CardPanel styleSwitch = new CardPanel { Height = 176 };
+                Label switchTitle = Ui.Label("蓝屏版本效果", 13F, FontStyle.Bold, Ui.Text);
+                switchTitle.Location = new Point(22, 18);
+                styleSwitch.Controls.Add(switchTitle);
+                Label switchDesc = Ui.Label("在当前新版蓝屏和 Windows 10 旧版蓝屏效果之间切换", 9F, FontStyle.Regular, Ui.Muted);
+                switchDesc.Location = new Point(22, 52);
+                styleSwitch.Controls.Add(switchDesc);
+                _blueScreenStyleButton = new ModernButton { Text = "切换为老版本蓝屏效果", Location = new Point(22, 102), Size = new Size(210, 40) };
+                _blueScreenStyleButton.Click += delegate { ToggleBlueScreenStyle(); };
+                styleSwitch.Controls.Add(_blueScreenStyleButton);
+                page.AddCard(styleSwitch);
+            }
             return page;
+        }
+
+        private void ToggleBlueScreenStyle()
+        {
+            bool useWindows10Effect = !Program.ForceWindows10BlueScreenEffect;
+            string command = useWindows10Effect ? "FR 0" : "FR 1";
+            string successMessage = useWindows10Effect ? "已切换为老版本蓝屏效果" : "已切换为新版本蓝屏效果";
+            if (!TrySendCommand(command, successMessage)) return;
+
+            Program.ForceWindows10BlueScreenEffect = useWindows10Effect;
+            _blueScreenStyleButton.Text = useWindows10Effect ? "切换为新版本蓝屏效果" : "切换为老版本蓝屏效果";
+            SetQrNavigationVisible(_qrSupported || useWindows10Effect);
+
+            if (useWindows10Effect && _changeTextPage != null && _changeTextPage.HasPreviewConfiguration)
+            {
+                TrySendCommandWithoutPrompt(_changeTextPage.BuildAppliedProtocolCommand(true));
+            }
+        }
+
+        private void SetQrNavigationVisible(bool visible)
+        {
+            ModernButton qrButton;
+            if (!_navButtons.TryGetValue("qr", out qrButton)) return;
+            qrButton.Visible = visible;
+            int y = 102;
+            foreach (ModernButton button in _navButtonOrder)
+            {
+                bool buttonVisible = button != qrButton || visible;
+                button.Visible = buttonVisible;
+                if (!buttonVisible) continue;
+                button.Top = y;
+                y += 50;
+            }
         }
 
         private static ModernButton CreatePreviewButton(Point location)
@@ -1215,7 +1312,8 @@ namespace BsodController
         {
             try
             {
-                _client.Probe();
+                if (_qrEditorPage != null) _qrEditorPage.LoadRectangleDescription();
+                else _client.Probe();
                 SetDeviceStatus(true, "驱动已连接");
                 if (showMessage) MessageBox.Show(this, "已成功打开 " + DeviceClient.DevicePath, "设备检测", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
@@ -1256,6 +1354,21 @@ namespace BsodController
             }
         }
 
+        private bool TrySendCommandWithoutPrompt(string command)
+        {
+            try
+            {
+                _client.Send(command);
+                SetDeviceStatus(true, "驱动已连接");
+                return true;
+            }
+            catch
+            {
+                SetDeviceStatus(false, "发送失败");
+                return false;
+            }
+        }
+
         private bool TrySendLargeCommand(string command, string confirmationMessage, string successMessage)
         {
             try
@@ -1284,7 +1397,7 @@ namespace BsodController
 
         private static string BuildDeviceError(Exception ex)
         {
-            return "无法访问 " + DeviceClient.DevicePath + "\n\n" + ex.Message;
+            return "无法访问 " + DeviceClient.DevicePath + "\n\n" + ex;
         }
     }
 
@@ -1391,7 +1504,7 @@ namespace BsodController
         {
             bool windows8 = !windows7 && Program.IsWindows8();
             Color modernBlue = windows8 ? Color.FromArgb(32, 103, 178) : Color.FromArgb(0, 120, 212);
-            bool windows11New = !windows7 && Program.IsWindows11NewBlueScreen();
+            bool windows11New = !windows7 && Program.IsWindows11NewBlueScreen() && !Program.ForceWindows10BlueScreenEffect;
             return new PreviewSnapshot
             {
                 Kind = PreviewKind.Full,
@@ -2088,6 +2201,34 @@ namespace BsodController
             return new List<string>(_appliedPreviewTexts);
         }
 
+        public string BuildAppliedProtocolCommand(bool forceWindows10Layout)
+        {
+            if (!HasPreviewConfiguration) return null;
+            return BuildProtocolCommand(_appliedPreviewTexts, _appliedSkipPercent, forceWindows10Layout);
+        }
+
+        private static string BuildProtocolCommand(IList<string> values, bool skipPercent, bool forceWindows10Layout)
+        {
+            int[] version = Program.GetSystemVersion();
+            bool windows10Layout = forceWindows10Layout || (version[2] < 26100 && version[0] <= 10);
+            StringBuilder command = new StringBuilder();
+            command.Append("CT ");
+            command.Append(skipPercent ? '1' : '0');
+            for (int i = 0; i < values.Count; i++)
+            {
+                command.Append(" \"");
+                command.Append(values[i]);
+                command.Append('"');
+                if (i == 2 && windows10Layout)
+                {
+                    int placeholderCount = skipPercent ? (Program.IsWindows8() ? 202 : 101) : (Program.IsWindows8() ? 303 : 202);
+                    for (int j = 0; j < placeholderCount; j++) command.Append(" \"1\"");
+                }
+                else if (i == 0 && !windows10Layout && version[2] >= 26100 && version[0] == 10) command.Append(" \"1\"");
+            }
+            return command.ToString();
+        }
+
         private void Apply()
         {
             try
@@ -2095,18 +2236,8 @@ namespace BsodController
                 List<string> values = new List<string>();
                 foreach (ChangeTextRow row in _items) values.Add(MainForm.ValidateProtocolText(row.Value, true));
                 if (values.Count == 1) values.Add(values[0]);
-                StringBuilder command = new StringBuilder();
-                command.Append("CT ");
-                command.Append(_skipPercent.Checked ? '1' : '0');
-                for (int i = 0; i < values.Count; i++)
-                {
-                    command.Append(" \"");
-                    command.Append(values[i]);
-                    command.Append('"');
-                    if (i == 2 && Program.GetSystemVersion()[2] < 26100 && Program.GetSystemVersion()[0] <= 10) for (int j = 0; j < (_skipPercent.Checked ? (Program.IsWindows8() ? 202 : 101) : (Program.IsWindows8() ? 303 : 202)); j++) command.Append(" \"1\"");
-                    else if (i == 0 && Program.GetSystemVersion()[2] >= 26100 && Program.GetSystemVersion()[0] == 10) command.Append(" \"1\"");
-                }
-                if (_send(command.ToString(), "替换文本配置已设置\n"))
+                string command = BuildProtocolCommand(values, _skipPercent.Checked, Program.ForceWindows10BlueScreenEffect);
+                if (_send(command, "替换文本配置已设置\n"))
                 {
                     _appliedPreviewTexts.Clear();
                     _appliedPreviewTexts.AddRange(values);
@@ -2172,8 +2303,8 @@ namespace BsodController
 
     internal sealed class QrEditorPage : PageView
     {
-        private const int RequiredPixelCount = 13225;
         private readonly LargeCommandRequestHandler _send;
+        private readonly RectDescriptionRequestHandler _readRectDescription;
         private readonly NumericUpDown _width;
         private readonly NumericUpDown _length;
         private readonly NumericUpDown _thickness;
@@ -2187,11 +2318,16 @@ namespace BsodController
         private uint[] _appliedPixels;
         private int _appliedWidth;
         private int _appliedLength;
+        private long _requiredPixelCount;
+        private uint _driverHeight;
+        private uint _driverWidth;
+        private bool _dimensionsLoaded;
         public bool HasAppliedConfiguration { get; private set; }
 
-        public QrEditorPage(LargeCommandRequestHandler send) : base("修改二维码", "将二维码改成自定义的图像")
+        public QrEditorPage(LargeCommandRequestHandler send, RectDescriptionRequestHandler readRectDescription) : base("修改二维码", "将二维码改成自定义的图像")
         {
             _send = send;
+            _readRectDescription = readRectDescription;
             CardPanel card = new CardPanel { Height = 920 };
             TableLayoutPanel layout = new TableLayoutPanel
             {
@@ -2226,12 +2362,12 @@ namespace BsodController
                 BackColor = Ui.CardAlt
             };
             layout.Controls.Add(statusBar, 0, 1);
-            _width = CreateDimensionField(115);
+            _width = CreateDimensionField(1);
             statusBar.Controls.Add(CreateFieldPanel("宽（行数）", _width, 104));
             Label multiply = Ui.Label("×", 12F, FontStyle.Bold, Ui.Muted);
             multiply.Margin = new Padding(2, 29, 2, 0);
             statusBar.Controls.Add(multiply);
-            _length = CreateDimensionField(115);
+            _length = CreateDimensionField(1);
             statusBar.Controls.Add(CreateFieldPanel("长（列数）", _length, 104));
             _dimensionStatus = Ui.Label(string.Empty, 9F, FontStyle.Bold, Ui.Green);
             _dimensionStatus.Margin = new Padding(10, 27, 8, 0);
@@ -2367,7 +2503,7 @@ namespace BsodController
                 BorderStyle = BorderStyle.FixedSingle
             };
             canvasLayout.Controls.Add(canvasHost, 0, 1);
-            _canvas = new QrCanvasControl(115, 115)
+            _canvas = new QrCanvasControl(1, 1)
             {
                 Location = new Point(8, 8),
                 PrimaryColor = Color.Black,
@@ -2393,9 +2529,48 @@ namespace BsodController
             UpdateDimensionStatus();
         }
 
+        public void LoadRectangleDescription()
+        {
+            try
+            {
+                DeviceClient.GP_RECT_DESC description = _readRectDescription();
+                if (description.H == 0 || description.W == 0) throw new InvalidOperationException("驱动返回的 H 和 W 必须大于 0");
+                if (description.H > int.MaxValue || description.W > int.MaxValue) throw new InvalidOperationException($"驱动返回的 H({description.H}) 或 W({description.W}) 超出画布支持范围");
+                long requiredPixelCount = checked((long)description.H * description.W);
+                if (requiredPixelCount > int.MaxValue) throw new InvalidOperationException("驱动返回的 H × W 超出画布支持范围");
+
+                if (_dimensionsLoaded && _requiredPixelCount != requiredPixelCount)
+                {
+                    _appliedPixels = null;
+                    HasAppliedConfiguration = false;
+                }
+                _driverHeight = description.H;
+                _driverWidth = description.W;
+                _requiredPixelCount = requiredPixelCount;
+                int maximumDimension = checked((int)requiredPixelCount);
+                _width.Maximum = maximumDimension;
+                _length.Maximum = maximumDimension;
+                _width.Value = description.H;
+                _length.Value = description.W;
+                _canvas.ResizeCanvas(checked((int)description.H), checked((int)description.W));
+                if (_zoom.Value != _canvas.Zoom) _zoom.Value = _canvas.Zoom;
+                _dimensionsLoaded = true;
+                UpdateDimensionStatus();
+            }
+            catch
+            {
+                _dimensionsLoaded = false;
+                _appliedPixels = null;
+                HasAppliedConfiguration = false;
+                _dimensionStatus.Text = "未能从驱动读取画布尺寸";
+                _dimensionStatus.ForeColor = Ui.Red;
+                throw;
+            }
+        }
+
         private static NumericUpDown CreateDimensionField(int value)
         {
-            return CreateNumberField(value, 1, RequiredPixelCount, 96);
+            return CreateNumberField(value, 1, int.MaxValue, 96);
         }
 
         private static NumericUpDown CreateNumberField(int value, int minimum, int maximum, int width)
@@ -2492,11 +2667,17 @@ namespace BsodController
 
         private void UpdateDimensionStatus()
         {
+            if (!_dimensionsLoaded)
+            {
+                _dimensionStatus.Text = "等待从驱动读取 H × W";
+                _dimensionStatus.ForeColor = Ui.Amber;
+                return;
+            }
             long width = decimal.ToInt64(_width.Value);
             long length = decimal.ToInt64(_length.Value);
             long product = width * length;
-            bool valid = product == RequiredPixelCount;
-            _dimensionStatus.Text = valid ? "有效：" + product.ToString(CultureInfo.InvariantCulture) + "(0x" + width.ToString("X", CultureInfo.InvariantCulture) + " × 0x" + length.ToString("X", CultureInfo.InvariantCulture) + ")" : "无效：" + product.ToString(CultureInfo.InvariantCulture) + " / " + RequiredPixelCount.ToString(CultureInfo.InvariantCulture);
+            bool valid = product == _requiredPixelCount;
+            _dimensionStatus.Text = valid ? "有效：" + product.ToString(CultureInfo.InvariantCulture) + "(0x" + width.ToString("X", CultureInfo.InvariantCulture) + " × 0x" + length.ToString("X", CultureInfo.InvariantCulture) + ")" : "无效：" + product.ToString(CultureInfo.InvariantCulture) + " / " + _requiredPixelCount.ToString(CultureInfo.InvariantCulture);
             _dimensionStatus.ForeColor = valid ? Ui.Green : Ui.Red;
         }
 
@@ -2504,8 +2685,13 @@ namespace BsodController
         {
             width = decimal.ToInt32(_width.Value);
             length = decimal.ToInt32(_length.Value);
-            if ((long)width * length == RequiredPixelCount) return true;
-            MessageBox.Show(FindForm(), "宽 × 长必须等于 13225\n\n有效示例：25 × 529、115 × 115、529 × 25", "尺寸无效", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            if (!_dimensionsLoaded)
+            {
+                MessageBox.Show(FindForm(), "尚未从驱动读取 GP_RECT_DESC，无法确定二维码画布像素数", "尺寸不可用", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+            if ((long)width * length == _requiredPixelCount) return true;
+            MessageBox.Show(FindForm(), "宽 × 长必须等于驱动返回的 H × W\n\nH × W：" + _driverHeight.ToString(CultureInfo.InvariantCulture) + " × " + _driverWidth.ToString(CultureInfo.InvariantCulture) + "\n要求像素数：" + _requiredPixelCount.ToString(CultureInfo.InvariantCulture), "尺寸无效", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return false;
         }
 
@@ -2539,7 +2725,7 @@ namespace BsodController
                 if (_canvas.ProtocolWidth != width || _canvas.ProtocolLength != length) _canvas.ResizeCanvas(width, length);
                 if (_zoom.Value != _canvas.Zoom) _zoom.Value = _canvas.Zoom;
                 uint[] pixels = _canvas.GetArgbPixels();
-                if (pixels.Length != RequiredPixelCount) throw new InvalidOperationException("画布数据项数量不是 13225");
+                if (pixels.LongLength != _requiredPixelCount) throw new InvalidOperationException("画布数据项数量不等于驱动返回的 H × W");
                 StringBuilder command = new StringBuilder(32 + (pixels.Length * 9));
                 command.Append("QR ");
                 command.Append(width.ToString("X", CultureInfo.InvariantCulture));
@@ -2552,7 +2738,7 @@ namespace BsodController
                     command.Append(pixels[i].ToString("X8", CultureInfo.InvariantCulture));
                 }
                 command.Append('}');
-                string confirmation = "是否应用当前二维码图像？\n\n宽 × 长：" + width.ToString(CultureInfo.InvariantCulture) + " × " + length.ToString(CultureInfo.InvariantCulture) + "(发送为 0x" + width.ToString("X", CultureInfo.InvariantCulture) + " 0x" + length.ToString("X", CultureInfo.InvariantCulture) + ")\n数据: 13225 项 ARGB";
+                string confirmation = "是否应用当前二维码图像？\n\n宽 × 长：" + width.ToString(CultureInfo.InvariantCulture) + " × " + length.ToString(CultureInfo.InvariantCulture) + "(发送为 0x" + width.ToString("X", CultureInfo.InvariantCulture) + " 0x" + length.ToString("X", CultureInfo.InvariantCulture) + ")\n数据: " + pixels.Length.ToString(CultureInfo.InvariantCulture) + " 项 ARGB";
                 if (_send(command.ToString(), confirmation, "二维码图像已应用"))
                 {
                     _appliedWidth = width;
@@ -4521,7 +4707,7 @@ namespace BsodController
                 snapshot.DisplayItems.AddRange(GetPreviewItems());
                 snapshot.DisplayImages.AddRange(GetPreviewImages());
                 foreach (PreviewTextItem item in snapshot.DisplayItems) if (item.ClearScreen) snapshot.Background = item.ScreenBackground;
-                foreach (PreviewImageItem item in snapshot.DisplayImages)if (item.ClearScreen) snapshot.Background = item.ScreenBackground;
+                foreach (PreviewImageItem item in snapshot.DisplayImages) if (item.ClearScreen) snapshot.Background = item.ScreenBackground;
                 snapshot.Kind = _windows7 ? PreviewKind.Windows7DisplayString : PreviewKind.ModernDisplayStrings;
                 HasPreviewConfiguration = true;
                 _preview(snapshot, "显示字符串/图片预览");
