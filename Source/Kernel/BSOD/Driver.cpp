@@ -26,7 +26,7 @@ typedef struct _HOOK_INFO {
 static HOOK_INFO g_StopCodeHookInfo = { NULL, NULL, 0, NULL, FALSE };
 static HOOK_INFO g_BgpClearScreenHookInfo = { NULL, NULL, 0, NULL, FALSE };
 static HOOK_INFO g_BgpTxtDisplayCharHookInfo = { NULL, NULL, 0, NULL, FALSE };
-static HOOK_INFO g_BcpDisplayCriticalHookInfo = { NULL, NULL, 0, NULL, FALSE };
+static HOOK_INFO g_BcpDisplayCriticalStringHookInfo = { NULL, NULL, 0, NULL, FALSE };
 static HOOK_INFO g_BgpFwDisplayBugCheckScreenHookInfo = { NULL, NULL, 0, NULL, FALSE };
 static PVOID  g_Win7StopCodeHookTarget = NULL;
 static PUCHAR g_Win7StopCodeOrigCode = NULL;
@@ -207,7 +207,7 @@ NTSTATUS WriteMemory(PVOID Address, PVOID Buffer, SIZE_T Size) {
     IoFreeMdl(mdl);
     return STATUS_SUCCESS;
 }
-ULONG_PTR haltCPU(ULONG_PTR) {
+ULONG_PTR HaltCPU(ULONG_PTR) {
     _disable();
     KIRQL irql;
     KeRaiseIrql(HIGH_LEVEL, &irql);
@@ -364,39 +364,32 @@ PVOID FindFeatureEnabledBsodRejuvenation()
     UCHAR rex = 0;
     SIZE_T offset = 0;
     UCHAR byte0 = 0;
-    __try
-    {
+    __try {
         byte0 = code[0];
     }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
+    __except (EXCEPTION_EXECUTE_HANDLER) {
         return NULL;
     }
-    if (byte0 >= 0x40 && byte0 <= 0x4F)
-    {
+    if (byte0 >= 0x40 && byte0 <= 0x4F) {
         rex = byte0;
         offset = 1;
     }
     UCHAR opcode = 0;
-    __try
-    {
+    __try {
         opcode = code[offset];
     }
     __except (EXCEPTION_EXECUTE_HANDLER)
     {
         return NULL;
     }
-    if (opcode == 0x80)
-    {
+    if (opcode == 0x80) {
         UCHAR modrm = 0;
         UCHAR imm8 = 0;
-        __try
-        {
+        __try {
             modrm = code[offset + 1];
             imm8 = code[offset + 6];
         }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
+        __except (EXCEPTION_EXECUTE_HANDLER) {
             return NULL;
         }
         UCHAR mod = (modrm >> 6) & 0x3;
@@ -406,24 +399,20 @@ PVOID FindFeatureEnabledBsodRejuvenation()
         if ((rex & 0x04) != 0) return NULL;
         if (imm8 != 0) return NULL;
         LONG disp32 = 0;
-        __try
-        {
+        __try {
             disp32 = *(PLONG)(code + offset + 2);
         }
-        __except (EXCEPTION_EXECUTE_HANDLER)
-        {
+        __except (EXCEPTION_EXECUTE_HANDLER) {
             return NULL;
         }
         return (PVOID)(rip + offset + 7 + disp32);
     }
     if (opcode != 0x38) return NULL;
     UCHAR modrm = 0;
-    __try
-    {
+    __try {
         modrm = code[offset + 1];
     }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
+    __except (EXCEPTION_EXECUTE_HANDLER) {
         return NULL;
     }
     UCHAR mod = (modrm >> 6) & 0x3;
@@ -434,12 +423,10 @@ PVOID FindFeatureEnabledBsodRejuvenation()
     if (actualReg != 12 && actualReg != 15) return NULL;
     if (mod != 0 || rm != 5) return NULL;
     LONG disp32 = 0;
-    __try
-    {
+    __try {
         disp32 = *(PLONG)(code + offset + 2);
     }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
+    __except (EXCEPTION_EXECUTE_HANDLER) {
         return NULL;
     }
     return (PVOID)(rip + offset + 6 + disp32);
@@ -914,15 +901,15 @@ NTSTATUS InstallBgpTxtDisplayCharacterHook(PVOID BgpTxtDisplayCharacterAddr, ULO
 }
 VOID UninstallBcpDisplayCriticalStringHook()
 {
-    if (!g_BcpDisplayCriticalHookInfo.Installed) return;
+    if (!g_BcpDisplayCriticalStringHookInfo.Installed) return;
     KIRQL oldIrql;
     KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
-    WriteMemory(g_BcpDisplayCriticalHookInfo.TargetAddress, g_BcpDisplayCriticalHookInfo.OriginalCode, g_BcpDisplayCriticalHookInfo.PatchSize);
+    WriteMemory(g_BcpDisplayCriticalStringHookInfo.TargetAddress, g_BcpDisplayCriticalStringHookInfo.OriginalCode, g_BcpDisplayCriticalStringHookInfo.PatchSize);
     KeLowerIrql(oldIrql);
-    ExFreePoolWithTag(g_BcpDisplayCriticalHookInfo.Trampoline, 0);
-    ExFreePoolWithTag(g_BcpDisplayCriticalHookInfo.OriginalCode, 'OgnB');
-    RtlZeroMemory(&g_BcpDisplayCriticalHookInfo, sizeof(g_BcpDisplayCriticalHookInfo));
-    g_BcpDisplayCriticalHookInfo.Installed = FALSE;
+    ExFreePoolWithTag(g_BcpDisplayCriticalStringHookInfo.Trampoline, 0);
+    ExFreePoolWithTag(g_BcpDisplayCriticalStringHookInfo.OriginalCode, 'OgnB');
+    RtlZeroMemory(&g_BcpDisplayCriticalStringHookInfo, sizeof(g_BcpDisplayCriticalStringHookInfo));
+    g_BcpDisplayCriticalStringHookInfo.Installed = FALSE;
     InstalledBlock = NULL;
 }
 NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr, BOOLEAN SkipPercentStrings, PWSTR Buffer, PWSTR* Buffers) {
@@ -1239,11 +1226,11 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
         ExFreePool(Block);
         return Status;
     }
-    g_BcpDisplayCriticalHookInfo.TargetAddress = BcpDisplayCriticalStringAddr;
-    g_BcpDisplayCriticalHookInfo.OriginalCode = origCopy;
-    g_BcpDisplayCriticalHookInfo.PatchSize = PatchSize;
-    g_BcpDisplayCriticalHookInfo.Trampoline = Block;
-    g_BcpDisplayCriticalHookInfo.Installed = TRUE;
+    g_BcpDisplayCriticalStringHookInfo.TargetAddress = BcpDisplayCriticalStringAddr;
+    g_BcpDisplayCriticalStringHookInfo.OriginalCode = origCopy;
+    g_BcpDisplayCriticalStringHookInfo.PatchSize = PatchSize;
+    g_BcpDisplayCriticalStringHookInfo.Trampoline = Block;
+    g_BcpDisplayCriticalStringHookInfo.Installed = TRUE;
     KeMemoryBarrier();
     InstalledBlock = Block;
     return STATUS_SUCCESS;
@@ -1371,7 +1358,7 @@ VOID DisplayString(PWSTR String, ULONG TextSize, ULONG TbackColor, ULONG TforeCo
         *g_tbcolor = TbackColor;
         *g_tfcolor = TforeColor;
     }
-    KeIpiGenericCall(haltCPU, 0);
+    KeIpiGenericCall(HaltCPU, 0);
     InbvAcquireDisplayOwnership();
     UCHAR OldBSOD = 0x00;
     WriteMemory(FindFeatureEnabledBsodRejuvenation(), &OldBSOD, 1);
@@ -1387,7 +1374,7 @@ VOID DisplayString(PWSTR String, ULONG TextSize, ULONG TbackColor, ULONG TforeCo
     BcpDisplayCriticalString(&NTText, TextSize, 0, 2);
 }
 VOID DisplayImage(ULONG* Image, ULONG64 bgColor, ULONG X, ULONG Y, ULONG W, ULONG H, BOOLEAN ClearScreen) {
-    KeIpiGenericCall(haltCPU, 0);
+    KeIpiGenericCall(HaltCPU, 0);
     InbvAcquireDisplayOwnership();
     UCHAR OldBSOD = 0x00;
     WriteMemory(FindFeatureEnabledBsodRejuvenation(), &OldBSOD, 1);
@@ -1549,7 +1536,7 @@ VOID Thread(PVOID) {
     UCHAR c3 = 0xC3;
     WriteMemory(KeBugCheckEx, &c3, 1);
     VOID(*KiDisplayBlueScreen)() = (VOID(*)())FindKiDisplayBlueScreen();
-    KeIpiGenericCall(haltCPU, 0);
+    KeIpiGenericCall(HaltCPU, 0);
     while (1) {
         for (int i = 0; i < 255; i += 17) {
             *(ULONG64*)g_color = (0xFF << 24) | (i << 8) | 0xFF - i;
@@ -2008,7 +1995,7 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
                     VGABlink = (BOOLEAN)blink;
                     VGA80x25 = (BOOLEAN)vga80x25;
                     VGARainbow = (BOOLEAN)rainbow;
-                    KeIpiGenericCall(haltCPU, 0);
+                    KeIpiGenericCall(HaltCPU, 0);
                     KeIpiGenericCall(Display, 0);
                     ExFreePoolWithTag(VGAString, 'DSpA');
                     VGAString = NULL;
