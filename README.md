@@ -50,9 +50,7 @@ A Windows kernel driver and companion user-mode application that allow you to fu
 | Windows 7 | 6.1 | Supported |
 | Windows 8 / 8.1 | 6.2 – 6.3 | Supported |
 | Windows 10 | 10240+ | Supported |
-| Windows 11 24H2 | 26100 | Supported |
-| Windows 11 25H2 | 26200 | Supported |
-| Windows 11 26H1 | 28000 | Supported |
+| Windows 11 | 26100+ | Supported |
 
 ## How It Works
 
