@@ -1289,7 +1289,7 @@ NTSTATUS InstallBgpFwDisplayBugCheckScreenHook(PVOID BgpFwDisplayBugCheckScreenA
     if ((ULONG64)Snapshot.H * (ULONG64)Snapshot.W != (ULONG64)OriginalSrc.W * (ULONG64)OriginalSrc.H || Snapshot.BitsPerPixel != 0x20 || Snapshot.Stride != OriginalSrc.Stride || Snapshot.Flags != 0) return STATUS_INVALID_PARAMETER;
     if (PixelDataBytes && (!Snapshot.PixelData || (ULONG_PTR)Snapshot.PixelData > (ULONG_PTR)-1 - PixelDataBytes)) return STATUS_INVALID_PARAMETER;
     WINDOWS_VERSION winver = DetectWindowsVersion();
-    PatchAddress = (PUCHAR)BgpFwDisplayBugCheckScreenAddr + (winver == WIN_10 ? 0x2A7 : (winver == WIN_11_24H2 ? 0x279 : (winver == WIN_11_25H2 || winver == WIN_11_26H1 ? 0x273 : 0x26D)));
+    PatchAddress = (PUCHAR)BgpFwDisplayBugCheckScreenAddr + (winver == WIN_10 ? 0x2A7 : (winver == WIN_11_24H2 || winver == WIN_11_26H1 ? 0x279 : (winver == WIN_11_25H2 ? 0x273 : 0x26D)));
     ReadMemory(PatchAddress, Probe, sizeof(Probe));
     if (Probe[0] != 0xE8) {
         if (Probe[0] != 0x48 || Probe[1] != 0x8B || Probe[2] != 0x0D || Probe[7] != 0x48 || Probe[8] != 0x8D || Probe[9] != 0x54 || Probe[10] != 0x24 || Probe[11] != 0x38 || Probe[12] != 0xE8) return STATUS_NOT_SUPPORTED;
