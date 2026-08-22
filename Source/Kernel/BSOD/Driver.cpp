@@ -207,7 +207,7 @@ NTSTATUS WriteMemory(PVOID Address, PVOID Buffer, SIZE_T Size) {
     IoFreeMdl(mdl);
     return STATUS_SUCCESS;
 }
-ULONG_PTR FuckYouVM3DMP(ULONG_PTR) {
+ULONG_PTR haltCPU(ULONG_PTR) {
     _disable();
     KIRQL irql;
     KeRaiseIrql(HIGH_LEVEL, &irql);
@@ -1371,7 +1371,7 @@ VOID DisplayString(PWSTR String, ULONG TextSize, ULONG TbackColor, ULONG TforeCo
         *g_tbcolor = TbackColor;
         *g_tfcolor = TforeColor;
     }
-    KeIpiGenericCall(FuckYouVM3DMP, 0);
+    KeIpiGenericCall(haltCPU, 0);
     InbvAcquireDisplayOwnership();
     UCHAR OldBSOD = 0x00;
     WriteMemory(FindFeatureEnabledBsodRejuvenation(), &OldBSOD, 1);
@@ -1387,7 +1387,7 @@ VOID DisplayString(PWSTR String, ULONG TextSize, ULONG TbackColor, ULONG TforeCo
     BcpDisplayCriticalString(&NTText, TextSize, 0, 2);
 }
 VOID DisplayImage(ULONG* Image, ULONG64 bgColor, ULONG X, ULONG Y, ULONG W, ULONG H, BOOLEAN ClearScreen) {
-    KeIpiGenericCall(FuckYouVM3DMP, 0);
+    KeIpiGenericCall(haltCPU, 0);
     InbvAcquireDisplayOwnership();
     UCHAR OldBSOD = 0x00;
     WriteMemory(FindFeatureEnabledBsodRejuvenation(), &OldBSOD, 1);
@@ -1549,7 +1549,7 @@ VOID Thread(PVOID) {
     UCHAR c3 = 0xC3;
     WriteMemory(KeBugCheckEx, &c3, 1);
     VOID(*KiDisplayBlueScreen)() = (VOID(*)())FindKiDisplayBlueScreen();
-    KeIpiGenericCall(FuckYouVM3DMP, 0);
+    KeIpiGenericCall(haltCPU, 0);
     while (1) {
         for (int i = 0; i < 255; i += 17) {
             *(ULONG64*)g_color = (0xFF << 24) | (i << 8) | 0xFF - i;
@@ -2008,7 +2008,7 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
                     VGABlink = (BOOLEAN)blink;
                     VGA80x25 = (BOOLEAN)vga80x25;
                     VGARainbow = (BOOLEAN)rainbow;
-                    KeIpiGenericCall(FuckYouVM3DMP, 0);
+                    KeIpiGenericCall(haltCPU, 0);
                     KeIpiGenericCall(Display, 0);
                     ExFreePoolWithTag(VGAString, 'DSpA');
                     VGAString = NULL;
