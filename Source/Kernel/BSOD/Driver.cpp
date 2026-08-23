@@ -1336,8 +1336,9 @@ NTSTATUS InstallBgpFwDisplayBugCheckScreenHook(PVOID BgpFwDisplayBugCheckScreenA
 }
 VOID BackupOriginalGP_RECT_DESC()
 {
-    PGP_RECT_DESC Data = *(PGP_RECT_DESC*)BgInternal_0xF8;
+    if (DetectWindowsVersion() < WIN_10 || BgInternal_0xF8 == NULL) return;
     __try {
+        PGP_RECT_DESC Data = *(PGP_RECT_DESC*)BgInternal_0xF8;
         RtlCopyMemory(&OriginalSrc, Data, sizeof(GP_RECT_DESC));
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
