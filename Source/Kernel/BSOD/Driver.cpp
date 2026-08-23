@@ -1959,7 +1959,7 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
                 ExFreePoolWithTag(args, 'StcA');
             }
         }
-        else if (p[0] == 'D' && p[1] == 'S' && p[2] == ' ') { //DisplayString
+        else if (p[0] == 'D' && p[1] == 'S' && p[2] == ' ') { //DisplayString & DisplayImage
             CHAR* cmd = p + 3;
             while (*cmd == ' ' || *cmd == '\t') cmd++;
             if (*cmd == '{') cmd++;
@@ -2043,60 +2043,125 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
                     if (*cmd == ',') cmd++;
                 }
             }
-            if (DetectWindowsVersion() != WIN_7) {
-                if (*cmd == '}') cmd++;
-                while (*cmd == ' ' || *cmd == '\t') cmd++;
-                if (cmd[0] == 'D' && cmd[1] == 'I' &&
-                    (cmd[2] == ' ' || cmd[2] == '\t' || cmd[2] == '{')) {
-                    cmd += 3;
-                    while (*cmd == ' ' || *cmd == '\t') cmd++;
-                    if (*cmd == '{') cmd++;
-                    while (*cmd && *cmd != '}') {
-                        while (*cmd == ' ' || *cmd == '\t' || *cmd == ',') cmd++;
-                        if (*cmd == '\0' || *cmd == '}') break;
-                        if (*cmd != '[') break;
-                        cmd++;
-                        ULONG data[8];
-                        for (int i = 0; i < 8; i++) {
-                            while (*cmd == ' ' || *cmd == '\t') cmd++;
-                            ULONG val = 0;
-                            while (*cmd && ((*cmd >= '0' && *cmd <= '9') || (*cmd >= 'a' && *cmd <= 'f') || (*cmd >= 'A' && *cmd <= 'F'))) {
-                                val = val * 16 + (*cmd <= '9' ? *cmd - '0' : (*cmd <= 'F' ? *cmd - 'A' + 10 : *cmd - 'a' + 10));
-                                cmd++;
+            if (cmd && *cmd == '}') {
+                CHAR* di = cmd + 1;
+                while (*di == ' ' || *di == '\t') di++;
+                if (DetectWindowsVersion() != WIN_7 && di[0] == 'D' && di[1] == 'I') {
+                    di += 2;
+                    while (*di == ' ' || *di == '\t') di++;
+                    if (*di != '{') {
+                        Irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
+                        Irp->IoStatus.Information = 0;
+                        IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                        return STATUS_INVALID_PARAMETER;
+                    }
+                    di++;
+                    while (*di && *di != '}') {
+                        while (*di == ' ' || *di == '\t') di++;
+                        if (*di == '\0' || *di == '}') break;
+                        if (*di != '[') {
+                            Irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
+                            Irp->IoStatus.Information = 0;
+                            IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                            return STATUS_INVALID_PARAMETER;
+                        }
+                        CHAR* bracketStart = di + 1;
+                        CHAR* bracketEnd = bracketStart;
+                        while (*bracketEnd && *bracketEnd != ']') bracketEnd++;
+                        if (*bracketEnd != ']') {
+                            Irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
+                            Irp->IoStatus.Information = 0;
+                            IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                            return STATUS_INVALID_PARAMETER;
+                        }
+                        ULONG count = 1;
+                        for (CHAR* tmp = bracketStart; tmp < bracketEnd; tmp++) if (*tmp == ',') count++;
+                        ULONG* image = (ULONG*)ExAllocatePoolWithTag(NonPagedPool, count * sizeof(ULONG), 'DImg');
+                        if (!image) {
+                            Irp->IoStatus.Status = STATUS_INSUFFICIENT_RESOURCES;
+                            Irp->IoStatus.Information = 0;
+                            IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                            return STATUS_INSUFFICIENT_RESOURCES;
+                        }
+                        BOOLEAN arrayOk = TRUE;
+                        ULONG index = 0;
+                        CHAR* pNum = bracketStart;
+                        while (pNum < bracketEnd) {
+                            while (pNum < bracketEnd && (*pNum == ' ' || *pNum == '\t')) pNum++;
+                            if (pNum >= bracketEnd) break;
+                            if (!((*pNum >= '0' && *pNum <= '9') || (*pNum >= 'a' && *pNum <= 'f') || (*pNum >= 'A' && *pNum <= 'F'))) {
+                                arrayOk = FALSE;
+                                break;
                             }
-                            data[i] = val;
-                            while (*cmd == ' ' || *cmd == '\t') cmd++;
-                            if (i < 7) {
-                                cmd++;
+                            ULONG value = 0;
+                            while (pNum < bracketEnd) {
+                                if (*pNum >= '0' && *pNum <= '9') {
+                                    value = (value << 4) | (ULONG)(*pNum - '0');
+                                }
+                                else if (*pNum >= 'a' && *pNum <= 'f') {
+                                    value = (value << 4) | (ULONG)(*pNum - 'a' + 10);
+                                }
+                                else if (*pNum >= 'A' && *pNum <= 'F') {
+                                    value = (value << 4) | (ULONG)(*pNum - 'A' + 10);
+                                }
+                                else {
+                                    break;
+                                }
+                                pNum++;
+                            }
+                            if (index >= count) {
+                                arrayOk = FALSE;
+                                break;
+                            }
+                            image[index++] = value;
+                            while (pNum < bracketEnd && (*pNum == ' ' || *pNum == '\t')) pNum++;
+                            if (index < count) {
+                                if (pNum >= bracketEnd || *pNum != ',') {
+                                    arrayOk = FALSE;
+                                    break;
+                                }
+                                pNum++;
+                            }
+                            else {
+                                if (pNum != bracketEnd) {
+                                    arrayOk = FALSE;
+                                    break;
+                                }
                             }
                         }
-                        cmd++;
-                        ULONG64 backgroundColor = 0;
-                        ULONG foreColor = 0, backColor = 0, textSize = 0, x = 0;
-                        ULONG clearScreen = 0;
-                        while (*cmd == ' ' || *cmd == '\t') cmd++;
-                        while (*cmd && ((*cmd >= '0' && *cmd <= '9') || (*cmd >= 'a' && *cmd <= 'f') || (*cmd >= 'A' && *cmd <= 'F'))) {
-                            backgroundColor = backgroundColor * 16 + (*cmd <= '9' ? *cmd - '0' : (*cmd <= 'F' ? *cmd - 'A' + 10 : *cmd - 'a' + 10));
-                            cmd++;
+                        if (!arrayOk || index != count) {
+                            ExFreePoolWithTag(image, 'DImg');
+                            Irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
+                            Irp->IoStatus.Information = 0;
+                            IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                            return STATUS_INVALID_PARAMETER;
                         }
-                        ULONG values[5];
-                        for (int i = 0; i < 5; i++) {
-                            while (*cmd == ' ' || *cmd == '\t') cmd++;
-                            ULONG v = 0;
-                            while (*cmd && ((*cmd >= '0' && *cmd <= '9') || (*cmd >= 'a' && *cmd <= 'f') || (*cmd >= 'A' && *cmd <= 'F'))) {
-                                v = v * 16 + (*cmd <= '9' ? *cmd - '0' : (*cmd <= 'F' ? *cmd - 'A' + 10 : *cmd - 'a' + 10));
-                                cmd++;
-                            }
-                            values[i] = v;
+                        CHAR* paramStart = bracketEnd + 1;
+                        while (*paramStart == ' ' || *paramStart == '\t') paramStart++;
+                        ULONG64 imgBgColor = 0;
+                        ULONG imgX = 0, imgY = 0, imgW = 0, imgH = 0;
+                        ULONG imgClearScreen = 0;
+                        int converted = sscanf_s(paramStart, "%llx %x %x %x %x %u", &imgBgColor, &imgX, &imgY, &imgW, &imgH, &imgClearScreen);
+                        if (converted != 6) {
+                            ExFreePoolWithTag(image, 'DImg');
+                            Irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
+                            Irp->IoStatus.Information = 0;
+                            IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                            return STATUS_INVALID_PARAMETER;
                         }
-                        foreColor = values[0];
-                        backColor = values[1];
-                        textSize = values[2];
-                        x = values[3];
-                        clearScreen = values[4];
-                        DisplayImage(data, backgroundColor, foreColor, backColor, textSize, x, (BOOLEAN)clearScreen);
-                        while (*cmd && *cmd != ',' && *cmd != '}') cmd++;
-                        if (*cmd == ',') cmd++;
+                        DisplayImage(image, imgBgColor, imgX, imgY, imgW, imgH, (BOOLEAN)imgClearScreen);
+                        ExFreePoolWithTag(image, 'DImg');
+                        di = paramStart;
+                        while (*di && *di != ',' && *di != '}') di++;
+                        if (*di == ',') {
+                            di++;
+                        }
+                    }
+                    if (*di != '}') {
+                        Irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
+                        Irp->IoStatus.Information = 0;
+                        IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                        return STATUS_INVALID_PARAMETER;
                     }
                 }
             }
