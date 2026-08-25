@@ -126,26 +126,6 @@ WINDOWS_VERSION DetectWindowsVersion() {
     }
     return WIN_UNKNOWN;
 }
-PVOID SearchPattern(PVOID BaseAddress, SIZE_T SearchSize, const UCHAR* Pattern, SIZE_T PatternSize, UCHAR Wildcard) {
-    for (SIZE_T i = 0; i <= SearchSize - PatternSize; i++) {
-        BOOLEAN Found = TRUE;
-        PVOID CurrentAddress = (PUCHAR)BaseAddress + i;
-        UCHAR* CurrentPattern = (UCHAR*)Pattern;
-        for (SIZE_T j = 0; j < PatternSize; j++) {
-            UCHAR MemoryByte;
-            if (!SafeReadMemory((PUCHAR)CurrentAddress + j, &MemoryByte, sizeof(UCHAR))) {
-                Found = FALSE;
-                break;
-            }
-            if (CurrentPattern[j] != Wildcard && MemoryByte != CurrentPattern[j]) {
-                Found = FALSE;
-                break;
-            }
-        }
-        if (Found) return CurrentAddress;
-    }
-    return NULL;
-}
 ULONG_PTR FindAddress(PVOID Address, unsigned char* Bin, SIZE_T size) {
     unsigned char* BytesAddress = (unsigned char*)Address;
     ULONG i;
