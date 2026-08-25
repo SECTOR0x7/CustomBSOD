@@ -67,6 +67,8 @@ Key functions discovered:
 - `BcpDisplayCriticalStringCentered` - Just like `BcpDisplayCriticalString`, but it appeared after the Windows 11 25H2 version
 - `BgpClearScreen` - The function renders the background of the BSOD.
 - `BgpTxtDisplayCharacter` - The function is used to render **one** character on the BSOD.
+- `BgpGxDrawRectangle` - The function is used for writing to the video memory, it will eventually use `DpiSystemDisplayWrite`
+- `DpiSystemDisplayWrite` - **(Not used)** DpiSystemDisplayWrite is at a more fundamental level and is used for directly writing to the video memory. It's in `dxgkrnl.sys`, information related to `DpiSystemDisplayWrite`, visit https://github.com/WindowsKin/Bcp-Rendering-Engine-Usage-in-Windows-NT-Kernel-BSOD
 
 ### 2. Inline Hooking
 
