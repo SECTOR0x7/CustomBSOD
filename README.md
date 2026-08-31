@@ -99,5 +99,5 @@ Startup sequence:
 3. Creates the driver service registry and load the driver
 4. Show the main window
 
-### Have Fun!
+## Have Fun!
 ![](/../main/assets/3.gif)
