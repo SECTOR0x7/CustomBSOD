@@ -191,6 +191,7 @@ namespace BsodController
 
         [DllImport("ntdll.dll")]
         private static extern int NtQuerySystemInformation(int SystemInformationClass, IntPtr SystemInformation, uint SystemInformationLength, out uint ReturnLength);
+
         public static bool IsTestSigningEnabled()
         {
             int size = Marshal.SizeOf(typeof(SYSTEM_CODEINTEGRITY_INFORMATION));
@@ -199,9 +200,7 @@ namespace BsodController
             {
                 SYSTEM_CODEINTEGRITY_INFORMATION info = new SYSTEM_CODEINTEGRITY_INFORMATION { Length = (uint)size };
                 Marshal.StructureToPtr(info, buffer, false);
-                uint returnLength;
-                int status = NtQuerySystemInformation(103, buffer, (uint)size, out returnLength);
-                if (status != 0) return false;
+                if (NtQuerySystemInformation(103, buffer, (uint)size, out _) != 0) return false;
                 info = (SYSTEM_CODEINTEGRITY_INFORMATION)Marshal.PtrToStructure(buffer, typeof(SYSTEM_CODEINTEGRITY_INFORMATION));
                 return (info.CodeIntegrityOptions & 2) != 0;
             }
@@ -214,10 +213,11 @@ namespace BsodController
             if (!IsTestSigningEnabled())
             {
                 MessageBox.Show("当前系统未打开testsigning，无法正常加载驱动！\n请打开管理员cmd并输入以下命令后重启系统:\nbcdedit /set testsigning on", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
-				Process.Start("cmd.exe", $"/c @echo 是否执行bcdedit /set testsigning on？&@echo 按下任意键执行此命令并重启系统...&@pause>nul 2>&1&%windir%\\{(Environment.Is64BitProcess ? "System32" : "Sysnative")}\\bcdedit.exe /set testsigning on&&shutdown -r -t 0 -f||echo 设置失败！请尝试手动设置&pause>nul 2>&1");
+                Process.Start("cmd.exe", $"/c @echo 是否执行bcdedit /set testsigning on？&@echo 按下任意键执行此命令并重启系统...&@pause>nul 2>&1&%windir%\\{(Environment.Is64BitProcess ? "System32" : "Sysnative")}\\bcdedit.exe /set testsigning on&&shutdown -r -t 0 -f||echo 设置失败！请尝试手动设置&pause>nul 2>&1");
+                Environment.Exit(1);
             }
             byte[] sysFileContent = new byte[] {
-	            //驱动文件数据
+                //你的驱动文件数据
             };
             try
             {
@@ -2125,7 +2125,7 @@ namespace BsodController
             plus.Click += delegate { AddRow(null); };
             card.Controls.Add(plus);
             _count = Ui.Label("0 / 100", 9F, FontStyle.Bold, Ui.Muted);
-            _count.Location = new Point(140, 536);
+            _count.Location = new Point(160, 536);
             card.Controls.Add(_count);
             ModernButton apply = new ModernButton { Text = "应用全部替换文本", Location = new Point(260, 524), Size = new Size(168, 42) };
             apply.Click += delegate { Apply(); };
@@ -4517,6 +4517,7 @@ namespace BsodController
         private FlowLayoutPanel _windows7Rows;
         private Windows7DisplayStringRow _windows7Row;
         private CheckBox _clearBeforeAll;
+        private CheckBox _loopAll;
         private ColorPickerBox _clearBeforeAllBackground;
         public bool HasPreviewConfiguration { get; private set; }
 
@@ -4540,6 +4541,9 @@ namespace BsodController
             _clearBeforeAll = Ui.CheckBox("绘制所有东西前清屏", false);
             _clearBeforeAll.Location = new Point(22, 94);
             card.Controls.Add(_clearBeforeAll);
+            _loopAll = Ui.CheckBox("循环显示所有配置", false);
+            _loopAll.Location = new Point(540, 94);
+            card.Controls.Add(_loopAll);
             _clearBeforeAllBackground = new ColorPickerBox("背景色 ARGB", 0xFF0078D4u) { Location = new Point(255, 69) };
             _clearBeforeAllBackground.Enabled = false;
             card.Controls.Add(_clearBeforeAllBackground);
@@ -4568,7 +4572,7 @@ namespace BsodController
             plus.Click += delegate { AddRow(); };
             card.Controls.Add(plus);
             _count = Ui.Label("0 / 100", 9F, FontStyle.Bold, Ui.Muted);
-            _count.Location = new Point(128, 648);
+            _count.Location = new Point(168, 648);
             card.Controls.Add(_count);
             ModernButton apply = new ModernButton { Text = "发送全部内容", Location = new Point(260, 636), Size = new Size(164, 42) };
             apply.Click += delegate { Apply(); };
@@ -4732,23 +4736,15 @@ namespace BsodController
                     _send(_windows7Row.BuildProtocolCommand(), "Windows 7 DisplayString 配置已发送");
                     return;
                 }
-                StringBuilder command = new StringBuilder("DS {");
+                StringBuilder command = new StringBuilder(_loopAll.Checked ? "DS L{" : "DS {");
                 bool hasText = false;
                 bool hasImage = false;
-                string background = _clearBeforeAllBackground.Value.ToString("X8", CultureInfo.InvariantCulture);
-                command.Append("\" \" 24 ");
-                command.Append(_clearBeforeAll.Checked ? background : "00000000");
-                command.Append(' ');
-                command.Append(_clearBeforeAll.Checked ? background : "00000000");
-                command.Append(' ');
-                command.Append(_clearBeforeAll.Checked ? background : "00000000");
-                command.Append(" 0 0 1");
-                hasText = true;
+                uint clearBeforeAllBackground = _clearBeforeAllBackground.Value;
                 for (int i = 0; i < _items.Count; i++)
                 {
                     if (_items[i].IsImage) { hasImage = true; continue; }
                     if (hasText) command.Append(",");
-                    command.Append(_items[i].BuildProtocolItem());
+                    command.Append(_items[i].BuildProtocolItem(_clearBeforeAll.Checked && !hasText, clearBeforeAllBackground));
                     hasText = true;
                 }
                 command.Append("}");
@@ -5203,10 +5199,11 @@ namespace BsodController
         public bool IsImage { get { return _imageMode; } }
         public bool ImageClearsScreen { get { return _imageMode && _imageEditor != null && _imageEditor.ClearScreen; } }
 
-        public string BuildProtocolItem()
+        public string BuildProtocolItem(bool clearBeforeAll, uint clearBeforeAllBackground)
         {
             string text = MainForm.ValidateProtocolText(_text.Text, true);
-            return "\"" + text + "\" " + _textSize.Value.ToString("X", CultureInfo.InvariantCulture) + " " + _textBack.Value.ToString("X", CultureInfo.InvariantCulture) + " " + _textFore.Value.ToString("X", CultureInfo.InvariantCulture) + " " + ((ulong)_background.Value).ToString("X", CultureInfo.InvariantCulture) + " " + _x.Value.ToString("X", CultureInfo.InvariantCulture) + " " + _y.Value.ToString("X", CultureInfo.InvariantCulture) + " " + (_clear.Checked ? "1" : "0");
+            string background = clearBeforeAll ? clearBeforeAllBackground.ToString("X8", CultureInfo.InvariantCulture) : ((ulong)_background.Value).ToString("X", CultureInfo.InvariantCulture);
+            return "\"" + text + "\" " + _textSize.Value.ToString("X", CultureInfo.InvariantCulture) + " " + _textBack.Value.ToString("X", CultureInfo.InvariantCulture) + " " + _textFore.Value.ToString("X", CultureInfo.InvariantCulture) + " " + background + " " + _x.Value.ToString("X", CultureInfo.InvariantCulture) + " " + _y.Value.ToString("X", CultureInfo.InvariantCulture) + " " + (clearBeforeAll || _clear.Checked ? "1" : "0");
         }
 
         public PreviewTextItem BuildPreviewItem()
