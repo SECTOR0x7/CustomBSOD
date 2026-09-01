@@ -892,7 +892,7 @@ VOID UninstallBcpDisplayCriticalStringHook()
     g_BcpDisplayCriticalStringHookInfo.Installed = FALSE;
     InstalledBlock = NULL;
 }
-NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr, BOOLEAN SkipPercentStrings, PWSTR Buffer, PWSTR* Buffers) {
+NTSTATUS InstallBcpDisplayCriticalStringHook( PVOID BcpDisplayCriticalStringAddr, BOOLEAN SkipPercentStrings, PWSTR Buffer, PWSTR* Buffers) {
     UCHAR ExpectedBytesWin8[20] = { 0x44, 0x89, 0x44, 0x24, 0x18, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8B, 0xEC };
     UCHAR ExpectedBytesWin10[16] = { 0x44, 0x89, 0x44, 0x24, 0x18, 0x48, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54 };
     UCHAR ExpectedBytesWin11[25] = { 0x44, 0x89, 0x44, 0x24, 0x18, 0x48, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8B, 0xEC };
@@ -902,7 +902,7 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
     SIZE_T CodeSize;
     PUCHAR ExpectedBytes;
     SIZE_T ExpectedBytesSize;
-    ULONG winVer;
+    WINDOWS_VERSION winVer = DetectWindowsVersion();
     ULONG BufferCount;
     ULONG Index;
     PWSTR CurrentBuffer;
@@ -922,13 +922,15 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
     PUCHAR JumpNullBuffer;
     PUCHAR JumpPercent;
     PUCHAR JumpScanLoop;
+    PUCHAR JumpHaveReplacement;
+    PUCHAR JumpNoReplacement;
     PUCHAR ScanLoop;
+    PUCHAR HaveReplacement;
     PUCHAR UseReplacement;
     PUCHAR ContinueOriginal;
     SIZE_T totalStringBytes;
     PUCHAR stringDataPtr;
     if (!BcpDisplayCriticalStringAddr || !Buffer) return STATUS_INVALID_PARAMETER;
-    winVer = DetectWindowsVersion();
     ULONG New = 0;
     ReadMemory(FindFeatureEnabledBsodRejuvenation(), &New, sizeof(ULONG));
     if (New == 1 && BcpDisplayCriticalStringAddr == g_BcpDisplayCriticalString) return STATUS_INVALID_PARAMETER;
@@ -962,7 +964,7 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
         ExpectedBytesSize = sizeof(ExpectedBytesWin10);
         PatchSize = 16;
     }
-    CodeSize = 109 + PatchSize + 12 + (SkipPercentStrings ? 23 : 0);
+    CodeSize = 112 + PatchSize + 12 + (SkipPercentStrings ? 23 : 0);
     if (InstalledBlock)
     {
         UninstallBcpDisplayCriticalStringHook();
@@ -980,9 +982,9 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
     totalStringBytes = 0;
     for (Index = 0; Index < BufferCount; ++Index)
     {
+        SIZE_T charCount = 0;
         CurrentBuffer = (Index == 0) ? Buffer : Buffers[Index - 1];
         if (!CurrentBuffer) return STATUS_INVALID_PARAMETER;
-        SIZE_T charCount = 0;
         while (charCount <= 0x7FFF && CurrentBuffer[charCount] != L'\0') ++charCount;
         if (charCount > 0x7FFF) return STATUS_NAME_TOO_LONG;
         totalStringBytes += (charCount * sizeof(WCHAR)) + sizeof(WCHAR);
@@ -1007,12 +1009,9 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
     {
         SIZE_T CharacterCount;
         USHORT ByteLength;
-        CurrentBuffer = Index == 0 ? Buffer : Buffers[Index - 1];
+        CurrentBuffer = (Index == 0) ? Buffer : Buffers[Index - 1];
         CharacterCount = 0;
-        while (CharacterCount <= 0x7FFF && CurrentBuffer[CharacterCount] != L'\0')
-        {
-            ++CharacterCount;
-        }
+        while (CharacterCount <= 0x7FFF && CurrentBuffer[CharacterCount] != L'\0') ++CharacterCount;
         if (CharacterCount > 0x7FFF)
         {
             ExFreePoolWithTag(origCopy, 'OgnB');
@@ -1032,7 +1031,10 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
     JumpNullBuffer = NULL;
     JumpPercent = NULL;
     JumpScanLoop = NULL;
+    JumpHaveReplacement = NULL;
+    JumpNoReplacement = NULL;
     ScanLoop = NULL;
+    HaveReplacement = NULL;
     UseReplacement = NULL;
     ContinueOriginal = NULL;
     Cursor = Block;
@@ -1108,17 +1110,23 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
     EMIT8(0xBA);
     EMIT8(0xF2);
     EMIT8(0x3F);
-    EMIT8(0x48);
-    EMIT8(0xC7);
-    EMIT8(0xC2);
-    EMIT32(BufferCount - 1);
-    EMIT8(0x4C);
-    EMIT8(0x39);
-    EMIT8(0xD2);
-    EMIT8(0x4C);
+    EMIT8(0x49);
+    EMIT8(0x81);
+    EMIT8(0xFA);
+    EMIT32(BufferCount);
+    EMIT8(0x72);
+    JumpHaveReplacement = Cursor;
+    EMIT8(0x00);
+    EMIT8(0xF0);
+    EMIT8(0x49);
     EMIT8(0x0F);
-    EMIT8(0x42);
-    EMIT8(0xD2);
+    EMIT8(0xBA);
+    EMIT8(0x33);
+    EMIT8(0x3F);
+    EMIT8(0xEB);
+    JumpNoReplacement = Cursor;
+    EMIT8(0x00);
+    HaveReplacement = Cursor;
     EMIT8(0x49);
     EMIT8(0xC1);
     EMIT8(0xE2);
@@ -1168,27 +1176,31 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
 #undef EMIT64
 #undef EMIT32
 #undef EMIT8
+    LONG_PTR Offset;
+    Offset = (LONG_PTR)UseReplacement - (LONG_PTR)(JumpNullString + 1);
+    if (Offset < -128 || Offset > 127) goto InvalidGeneratedCode;
+    *JumpNullString = (UCHAR)(CHAR)Offset;
+    Offset = (LONG_PTR)ContinueOriginal - (LONG_PTR)(JumpEmptyString + 1);
+    if (Offset < -128 || Offset > 127) goto InvalidGeneratedCode;
+    *JumpEmptyString = (UCHAR)(CHAR)Offset;
+    if (SkipPercentStrings)
     {
-        LONG_PTR Offset;
-        Offset = (LONG_PTR)UseReplacement - (LONG_PTR)(JumpNullString + 1);
+        Offset = (LONG_PTR)UseReplacement - (LONG_PTR)(JumpNullBuffer + 1);
         if (Offset < -128 || Offset > 127) goto InvalidGeneratedCode;
-        *JumpNullString = (UCHAR)(CHAR)Offset;
-        Offset = (LONG_PTR)ContinueOriginal - (LONG_PTR)(JumpEmptyString + 1);
+        *JumpNullBuffer = (UCHAR)(CHAR)Offset;
+        Offset = (LONG_PTR)ContinueOriginal - (LONG_PTR)(JumpPercent + 1);
         if (Offset < -128 || Offset > 127) goto InvalidGeneratedCode;
-        *JumpEmptyString = (UCHAR)(CHAR)Offset;
-        if (SkipPercentStrings)
-        {
-            Offset = (LONG_PTR)UseReplacement - (LONG_PTR)(JumpNullBuffer + 1);
-            if (Offset < -128 || Offset > 127) goto InvalidGeneratedCode;
-            *JumpNullBuffer = (UCHAR)(CHAR)Offset;
-            Offset = (LONG_PTR)ContinueOriginal - (LONG_PTR)(JumpPercent + 1);
-            if (Offset < -128 || Offset > 127) goto InvalidGeneratedCode;
-            *JumpPercent = (UCHAR)(CHAR)Offset;
-            Offset = (LONG_PTR)ScanLoop - (LONG_PTR)(JumpScanLoop + 1);
-            if (Offset < -128 || Offset > 127) goto InvalidGeneratedCode;
-            *JumpScanLoop = (UCHAR)(CHAR)Offset;
-        }
+        *JumpPercent = (UCHAR)(CHAR)Offset;
+        Offset = (LONG_PTR)ScanLoop - (LONG_PTR)(JumpScanLoop + 1);
+        if (Offset < -128 || Offset > 127) goto InvalidGeneratedCode;
+        *JumpScanLoop = (UCHAR)(CHAR)Offset;
     }
+    Offset = (LONG_PTR)HaveReplacement - (LONG_PTR)(JumpHaveReplacement + 1);
+    if (Offset < -128 || Offset > 127) goto InvalidGeneratedCode;
+    *JumpHaveReplacement = (UCHAR)(CHAR)Offset;
+    Offset = (LONG_PTR)ContinueOriginal - (LONG_PTR)(JumpNoReplacement + 1);
+    if (Offset < -128 || Offset > 127) goto InvalidGeneratedCode;
+    *JumpNoReplacement = (UCHAR)(CHAR)Offset;
     if ((SIZE_T)(Cursor - Block) != CodeSize) goto InvalidGeneratedCode;
     RtlFillMemory(Patch, sizeof(Patch), 0x90);
     Patch[0] = 0x49;
@@ -1219,6 +1231,7 @@ InvalidGeneratedCode:
     ExFreePool(Block);
     return STATUS_INTERNAL_ERROR;
 }
+
 VOID UninstallBgpFwDisplayBugCheckScreenHook() {
     if (!g_BgpFwDisplayBugCheckScreenHookInfo.Installed) return;
     if (!g_BgpFwDisplayBugCheckScreenHookInfo.TargetAddress || !g_BgpFwDisplayBugCheckScreenHookInfo.OriginalCode || !g_BgpFwDisplayBugCheckScreenHookInfo.Trampoline) return;
@@ -1341,8 +1354,7 @@ VOID DisplayString(PWSTR String, ULONG TextSize, ULONG TbackColor, ULONG TforeCo
     }
     KeIpiGenericCall(HaltCPU, 0);
     InbvAcquireDisplayOwnership();
-    UCHAR OldBSOD = 0x00;
-    WriteMemory(FindFeatureEnabledBsodRejuvenation(), &OldBSOD, 1);
+    WriteMemory(FindFeatureEnabledBsodRejuvenation(), "\0", 1);
     WINDOWS_VERSION winver = DetectWindowsVersion();
     ULONG BcpCursor[] = { X, Y, winver >= WIN_11_25H2 ? (winver == WIN_11_26H1 ? Y : 0) : X };
     WriteMemory(FindBcpCursor(), BcpCursor, sizeof(BcpCursor));
@@ -1357,8 +1369,7 @@ VOID DisplayString(PWSTR String, ULONG TextSize, ULONG TbackColor, ULONG TforeCo
 VOID DisplayImage(ULONG* Image, ULONG64 bgColor, ULONG X, ULONG Y, ULONG W, ULONG H, BOOLEAN ClearScreen) {
     KeIpiGenericCall(HaltCPU, 0);
     InbvAcquireDisplayOwnership();
-    UCHAR OldBSOD = 0x00;
-    WriteMemory(FindFeatureEnabledBsodRejuvenation(), &OldBSOD, 1);
+    WriteMemory(FindFeatureEnabledBsodRejuvenation(), "\0", 1);
     if (ClearScreen) ((VOID(*)(ULONG))g_BgpClearScreen)(bgColor);
     _BgpGxDrawRectangle BgpGxDrawRectangle = (_BgpGxDrawRectangle)g_BgpGxDrawRectangle;
     GP_RECT_DESC pSrcInfo;
@@ -1941,16 +1952,50 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
         }
         else if (p[0] == 'D' && p[1] == 'S' && p[2] == ' ') { //DisplayString & DisplayImage
             CHAR* cmd = p + 3;
+            BOOLEAN loop = FALSE;
             while (*cmd == ' ' || *cmd == '\t') cmd++;
+            if (*cmd == 'L') { loop = TRUE; cmd++; }
             if (*cmd == '{') cmd++;
+            if (DetectWindowsVersion() == WIN_7) loop = FALSE;
+            struct _OP_NODE {
+                LIST_ENTRY ListEntry;
+                UCHAR Type;
+                union {
+                    struct {
+                        CHAR* Str;
+                        ULONG TextSize;
+                        ULONG TbackColor;
+                        ULONG TforeColor;
+                        ULONG64 BgColor;
+                        ULONG X, Y;
+                        BOOLEAN ClearScreen;
+                        BOOLEAN IsWin7;
+                        ULONG Win7BackColor;
+                        ULONG Win7ForeColor;
+                        BOOLEAN Win7Blink;
+                        BOOLEAN Win7Vga80x25;
+                        BOOLEAN Win7Rainbow;
+                    } StringOp;
+                    struct {
+                        ULONG* ImageData;
+                        ULONG Count;
+                        ULONG64 BgColor;
+                        ULONG X, Y, W, H;
+                        BOOLEAN ClearScreen;
+                    } ImageOp;
+                };
+            };
+            LIST_ENTRY opListHead;
+            InitializeListHead(&opListHead);
+            BOOLEAN parseError = FALSE;
             while (*cmd && *cmd != '}') {
                 while (*cmd == ' ' || *cmd == '\t') cmd++;
                 if (*cmd == '\0' || *cmd == '}') break;
-                if (*cmd != '"') break;
+                if (*cmd != '"') { parseError = TRUE; break; }
                 CHAR* strStart = cmd + 1;
                 CHAR* strEnd = strStart;
                 while (*strEnd && *strEnd != '"') strEnd++;
-                if (*strEnd != '"') break;
+                if (*strEnd != '"') { parseError = TRUE; break; }
                 ULONG strLen = (ULONG)(strEnd - strStart);
                 CHAR* ansiStr = (CHAR*)ExAllocatePoolWithTag(NonPagedPool, strLen + 1, 'DSpA');
                 if (!ansiStr) {
@@ -1961,187 +2006,307 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
                 }
                 RtlCopyMemory(ansiStr, strStart, strLen);
                 ansiStr[strLen] = '\0';
+                struct _OP_NODE* node = (struct _OP_NODE*)ExAllocatePoolWithTag(NonPagedPool, sizeof(struct _OP_NODE), 'OpNd');
+                if (!node) {
+                    ExFreePoolWithTag(ansiStr, 'DSpA');
+                    Irp->IoStatus.Status = STATUS_INSUFFICIENT_RESOURCES;
+                    Irp->IoStatus.Information = 0;
+                    IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                    return STATUS_INSUFFICIENT_RESOURCES;
+                }
+                RtlZeroMemory(node, sizeof(struct _OP_NODE));
+                InsertTailList(&opListHead, &node->ListEntry);
+                node->Type = 1;
+                node->StringOp.Str = ansiStr;
+                CHAR* numStart = strEnd + 1;
+                while (*numStart == ' ' || *numStart == '\t') numStart++;
                 if (DetectWindowsVersion() == WIN_7) {
-                    CHAR* numStart = strEnd + 1;
-                    while (*numStart == ' ' || *numStart == '\t') numStart++;
+                    node->StringOp.IsWin7 = TRUE;
                     ULONG backColor, foreColor, blink, vga80x25, rainbow;
                     int converted = sscanf_s(numStart, "%x %x %x %x %x", &backColor, &foreColor, &blink, &vga80x25, &rainbow);
                     if (converted != 5) {
-                        ExFreePoolWithTag(ansiStr, 'DSpA');
+                        parseError = TRUE;
                         break;
                     }
-                    VGAString = (UCHAR*)ansiStr;
-                    VGABackColor = backColor;
-                    VGAForeColor = foreColor;
-                    VGABlink = (BOOLEAN)blink;
-                    VGA80x25 = (BOOLEAN)vga80x25;
-                    VGARainbow = (BOOLEAN)rainbow;
-                    KeIpiGenericCall(HaltCPU, 0);
-                    KeIpiGenericCall(Display, 0);
-                    ExFreePoolWithTag(VGAString, 'DSpA');
-                    VGAString = NULL;
-                    cmd = numStart;
-                    while (*cmd && *cmd != ',' && *cmd != '}') cmd++;
-                    if (*cmd == ',') cmd++;
+                    node->StringOp.Win7BackColor = backColor;
+                    node->StringOp.Win7ForeColor = foreColor;
+                    node->StringOp.Win7Blink = (BOOLEAN)blink;
+                    node->StringOp.Win7Vga80x25 = (BOOLEAN)vga80x25;
+                    node->StringOp.Win7Rainbow = (BOOLEAN)rainbow;
                 }
                 else {
-                    PWCHAR wstr = NULL;
-                    ANSI_STRING ansi;
-                    UNICODE_STRING uni;
-                    RtlInitAnsiString(&ansi, ansiStr);
-                    ULONG wlen = RtlAnsiStringToUnicodeSize(&ansi) / sizeof(WCHAR);
-                    wstr = (PWCHAR)ExAllocatePoolWithTag(NonPagedPool, (wlen + 1) * sizeof(WCHAR), 'DSpW');
-                    if (!wstr) {
-                        ExFreePoolWithTag(ansiStr, 'DSpA');
-                        Irp->IoStatus.Status = STATUS_INSUFFICIENT_RESOURCES;
-                        Irp->IoStatus.Information = 0;
-                        IoCompleteRequest(Irp, IO_NO_INCREMENT);
-                        return STATUS_INSUFFICIENT_RESOURCES;
-                    }
-                    uni.Buffer = wstr;
-                    uni.MaximumLength = (USHORT)((wlen + 1) * sizeof(WCHAR));
-                    if (!NT_SUCCESS(RtlAnsiStringToUnicodeString(&uni, &ansi, FALSE))) {
-                        ExFreePoolWithTag(wstr, 'DSpW');
-                        ExFreePoolWithTag(ansiStr, 'DSpA');
-                        break;
-                    }
-                    ExFreePoolWithTag(ansiStr, 'DSpA');
-                    CHAR* numStart = strEnd + 1;
-                    while (*numStart == ' ' || *numStart == '\t') numStart++;
+                    node->StringOp.IsWin7 = FALSE;
                     ULONG TextSize, TbackColor, TforeColor, X, Y;
                     ULONG64 backgroundColor;
                     BOOLEAN ClearScreen;
                     int converted = sscanf_s(numStart, "%x %x %x %llx %x %x %u", &TextSize, &TbackColor, &TforeColor, &backgroundColor, &X, &Y, &ClearScreen);
                     if (converted != 7) {
-                        ExFreePoolWithTag(wstr, 'DSpW');
+                        parseError = TRUE;
                         break;
                     }
-                    DisplayString(wstr, TextSize, TbackColor, TforeColor, backgroundColor, X, Y, ClearScreen);
-                    ExFreePoolWithTag(wstr, 'DSpW');
-                    cmd = numStart;
-                    while (*cmd && *cmd != ',' && *cmd != '}') cmd++;
-                    if (*cmd == ',') cmd++;
+                    node->StringOp.TextSize = TextSize;
+                    node->StringOp.TbackColor = TbackColor;
+                    node->StringOp.TforeColor = TforeColor;
+                    node->StringOp.BgColor = backgroundColor;
+                    node->StringOp.X = X;
+                    node->StringOp.Y = Y;
+                    node->StringOp.ClearScreen = (BOOLEAN)ClearScreen;
                 }
+                cmd = numStart;
+                while (*cmd && *cmd != ',' && *cmd != '}') cmd++;
+                if (*cmd == ',') cmd++;
             }
-            if (cmd && *cmd == '}') {
+            if (!parseError && cmd && *cmd == '}') {
                 CHAR* di = cmd + 1;
                 while (*di == ' ' || *di == '\t') di++;
                 if (DetectWindowsVersion() != WIN_7 && di[0] == 'D' && di[1] == 'I') {
                     di += 2;
                     while (*di == ' ' || *di == '\t') di++;
-                    if (*di != '{') {
-                        Irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
-                        Irp->IoStatus.Information = 0;
-                        IoCompleteRequest(Irp, IO_NO_INCREMENT);
-                        return STATUS_INVALID_PARAMETER;
-                    }
-                    di++;
-                    while (*di && *di != '}') {
-                        while (*di == ' ' || *di == '\t') di++;
-                        if (*di == '\0' || *di == '}') break;
-                        if (*di != '[') {
-                            Irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
-                            Irp->IoStatus.Information = 0;
-                            IoCompleteRequest(Irp, IO_NO_INCREMENT);
-                            return STATUS_INVALID_PARAMETER;
-                        }
-                        CHAR* bracketStart = di + 1;
-                        CHAR* bracketEnd = bracketStart;
-                        while (*bracketEnd && *bracketEnd != ']') bracketEnd++;
-                        if (*bracketEnd != ']') {
-                            Irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
-                            Irp->IoStatus.Information = 0;
-                            IoCompleteRequest(Irp, IO_NO_INCREMENT);
-                            return STATUS_INVALID_PARAMETER;
-                        }
-                        ULONG count = 1;
-                        for (CHAR* tmp = bracketStart; tmp < bracketEnd; tmp++) if (*tmp == ',') count++;
-                        ULONG* image = (ULONG*)ExAllocatePoolWithTag(NonPagedPool, count * sizeof(ULONG), 'DImg');
-                        if (!image) {
-                            Irp->IoStatus.Status = STATUS_INSUFFICIENT_RESOURCES;
-                            Irp->IoStatus.Information = 0;
-                            IoCompleteRequest(Irp, IO_NO_INCREMENT);
-                            return STATUS_INSUFFICIENT_RESOURCES;
-                        }
-                        BOOLEAN arrayOk = TRUE;
-                        ULONG index = 0;
-                        CHAR* pNum = bracketStart;
-                        while (pNum < bracketEnd) {
-                            while (pNum < bracketEnd && (*pNum == ' ' || *pNum == '\t')) pNum++;
-                            if (pNum >= bracketEnd) break;
-                            if (!((*pNum >= '0' && *pNum <= '9') || (*pNum >= 'a' && *pNum <= 'f') || (*pNum >= 'A' && *pNum <= 'F'))) {
-                                arrayOk = FALSE;
+                    if (*di != '{')  parseError = TRUE;
+                    else {
+                        di++;
+                        while (*di && *di != '}') {
+                            while (*di == ' ' || *di == '\t') di++;
+                            if (*di == '\0' || *di == '}') break;
+                            if (*di != '[') {
+                                parseError = TRUE;
                                 break;
                             }
-                            ULONG value = 0;
+                            CHAR* bracketStart = di + 1;
+                            CHAR* bracketEnd = bracketStart;
+                            while (*bracketEnd && *bracketEnd != ']') bracketEnd++;
+                            if (*bracketEnd != ']') {
+                                parseError = TRUE;
+                                break;
+                            }
+                            ULONG count = 1;
+                            for (CHAR* tmp = bracketStart; tmp < bracketEnd; tmp++) if (*tmp == ',') count++;
+                            ULONG* image = (ULONG*)ExAllocatePoolWithTag(NonPagedPool, count * sizeof(ULONG), 'DImg');
+                            if (!image) {
+                                Irp->IoStatus.Status = STATUS_INSUFFICIENT_RESOURCES;
+                                Irp->IoStatus.Information = 0;
+                                IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                                return STATUS_INSUFFICIENT_RESOURCES;
+                            }
+                            BOOLEAN arrayOk = TRUE;
+                            ULONG index = 0;
+                            CHAR* pNum = bracketStart;
                             while (pNum < bracketEnd) {
-                                if (*pNum >= '0' && *pNum <= '9') {
-                                    value = (value << 4) | (ULONG)(*pNum - '0');
+                                while (pNum < bracketEnd && (*pNum == ' ' || *pNum == '\t')) pNum++;
+                                if (pNum >= bracketEnd) break;
+                                if (!((*pNum >= '0' && *pNum <= '9') || (*pNum >= 'a' && *pNum <= 'f') || (*pNum >= 'A' && *pNum <= 'F'))) {
+                                    arrayOk = FALSE;
+                                    break;
                                 }
-                                else if (*pNum >= 'a' && *pNum <= 'f') {
-                                    value = (value << 4) | (ULONG)(*pNum - 'a' + 10);
+                                ULONG value = 0;
+                                while (pNum < bracketEnd) {
+                                    if (*pNum >= '0' && *pNum <= '9') value = (value << 4) | (ULONG)(*pNum - '0');
+                                    else if (*pNum >= 'a' && *pNum <= 'f') value = (value << 4) | (ULONG)(*pNum - 'a' + 10);
+                                    else if (*pNum >= 'A' && *pNum <= 'F') value = (value << 4) | (ULONG)(*pNum - 'A' + 10);
+                                    else break;
+                                    pNum++;
                                 }
-                                else if (*pNum >= 'A' && *pNum <= 'F') {
-                                    value = (value << 4) | (ULONG)(*pNum - 'A' + 10);
+                                if (index >= count) {
+                                    arrayOk = FALSE;
+                                    break;
+                                }
+                                image[index++] = value;
+                                while (pNum < bracketEnd && (*pNum == ' ' || *pNum == '\t')) pNum++;
+                                if (index < count) {
+                                    if (pNum >= bracketEnd || *pNum != ',') {
+                                        arrayOk = FALSE;
+                                        break;
+                                    }
+                                    pNum++;
                                 }
                                 else {
-                                    break;
+                                    if (pNum != bracketEnd) {
+                                        arrayOk = FALSE;
+                                        break;
+                                    }
                                 }
-                                pNum++;
                             }
-                            if (index >= count) {
-                                arrayOk = FALSE;
+                            if (!arrayOk || index != count) {
+                                ExFreePoolWithTag(image, 'DImg');
+                                parseError = TRUE;
                                 break;
                             }
-                            image[index++] = value;
-                            while (pNum < bracketEnd && (*pNum == ' ' || *pNum == '\t')) pNum++;
-                            if (index < count) {
-                                if (pNum >= bracketEnd || *pNum != ',') {
-                                    arrayOk = FALSE;
-                                    break;
-                                }
-                                pNum++;
+                            CHAR* paramStart = bracketEnd + 1;
+                            while (*paramStart == ' ' || *paramStart == '\t') paramStart++;
+                            ULONG64 imgBgColor = 0;
+                            ULONG imgX = 0, imgY = 0, imgW = 0, imgH = 0;
+                            ULONG imgClearScreen = 0;
+                            int converted = sscanf_s(paramStart, "%llx %x %x %x %x %u", &imgBgColor, &imgX, &imgY, &imgW, &imgH, &imgClearScreen);
+                            if (converted != 6) {
+                                ExFreePoolWithTag(image, 'DImg');
+                                parseError = TRUE;
+                                break;
                             }
-                            else {
-                                if (pNum != bracketEnd) {
-                                    arrayOk = FALSE;
-                                    break;
-                                }
+                            struct _OP_NODE* imgNode = (struct _OP_NODE*)ExAllocatePoolWithTag(NonPagedPool, sizeof(struct _OP_NODE), 'OpNd');
+                            if (!imgNode) {
+                                ExFreePoolWithTag(image, 'DImg');
+                                Irp->IoStatus.Status = STATUS_INSUFFICIENT_RESOURCES;
+                                Irp->IoStatus.Information = 0;
+                                IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                                return STATUS_INSUFFICIENT_RESOURCES;
+                            }
+                            RtlZeroMemory(imgNode, sizeof(struct _OP_NODE));
+                            InsertTailList(&opListHead, &imgNode->ListEntry);
+                            imgNode->Type = 2;
+                            ULONG* imgCopy = (ULONG*)ExAllocatePoolWithTag(NonPagedPool, count * sizeof(ULONG), 'ImgC');
+                            if (!imgCopy) {
+                                RemoveEntryList(&imgNode->ListEntry);
+                                ExFreePoolWithTag(imgNode, 'OpNd');
+                                ExFreePoolWithTag(image, 'DImg');
+                                Irp->IoStatus.Status = STATUS_INSUFFICIENT_RESOURCES;
+                                Irp->IoStatus.Information = 0;
+                                IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                                return STATUS_INSUFFICIENT_RESOURCES;
+                            }
+                            RtlCopyMemory(imgCopy, image, count * sizeof(ULONG));
+                            ExFreePoolWithTag(image, 'DImg');
+                            imgNode->ImageOp.ImageData = imgCopy;
+                            imgNode->ImageOp.Count = count;
+                            imgNode->ImageOp.BgColor = imgBgColor;
+                            imgNode->ImageOp.X = imgX;
+                            imgNode->ImageOp.Y = imgY;
+                            imgNode->ImageOp.W = imgW;
+                            imgNode->ImageOp.H = imgH;
+                            imgNode->ImageOp.ClearScreen = (BOOLEAN)imgClearScreen;
+                            di = paramStart;
+                            while (*di && *di != ',' && *di != '}') di++;
+                            if (*di == ',') di++;
+                        }
+                        if (*di != '}') parseError = TRUE;
+                    }
+                }
+            }
+            else parseError = TRUE;
+            if (parseError) {
+                while (!IsListEmpty(&opListHead)) {
+                    PLIST_ENTRY entry = RemoveHeadList(&opListHead);
+                    struct _OP_NODE* node = CONTAINING_RECORD(entry, struct _OP_NODE, ListEntry);
+                    if (node->Type == 1) if (node->StringOp.Str) ExFreePoolWithTag(node->StringOp.Str, 'DSpA');
+                    else if (node->Type == 2) if (node->ImageOp.ImageData) ExFreePoolWithTag(node->ImageOp.ImageData, 'ImgC');
+                    ExFreePoolWithTag(node, 'OpNd');
+                }
+                Irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
+                Irp->IoStatus.Information = 0;
+                IoCompleteRequest(Irp, IO_NO_INCREMENT);
+                return STATUS_INVALID_PARAMETER;
+            }
+            if (!loop) {
+                PLIST_ENTRY entry;
+                for (entry = opListHead.Flink; entry != &opListHead; entry = entry->Flink) {
+                    struct _OP_NODE* node = CONTAINING_RECORD(entry, struct _OP_NODE, ListEntry);
+                    if (node->Type == 1) {
+                        if (node->StringOp.IsWin7) {
+                            CHAR* ansi = (CHAR*)ExAllocatePoolWithTag(NonPagedPool, strlen(node->StringOp.Str) + 1, 'DSpA');
+                            if (ansi) {
+                                RtlCopyMemory(ansi, node->StringOp.Str, strlen(node->StringOp.Str) + 1);
+                                VGAString = (UCHAR*)ansi;
+                                VGABackColor = node->StringOp.Win7BackColor;
+                                VGAForeColor = node->StringOp.Win7ForeColor;
+                                VGABlink = node->StringOp.Win7Blink;
+                                VGA80x25 = node->StringOp.Win7Vga80x25;
+                                VGARainbow = node->StringOp.Win7Rainbow;
+                                KeIpiGenericCall(HaltCPU, 0);
+                                KeIpiGenericCall(Display, 0);
+                                ExFreePoolWithTag(VGAString, 'DSpA');
+                                VGAString = NULL;
                             }
                         }
-                        if (!arrayOk || index != count) {
-                            ExFreePoolWithTag(image, 'DImg');
-                            Irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
-                            Irp->IoStatus.Information = 0;
-                            IoCompleteRequest(Irp, IO_NO_INCREMENT);
-                            return STATUS_INVALID_PARAMETER;
-                        }
-                        CHAR* paramStart = bracketEnd + 1;
-                        while (*paramStart == ' ' || *paramStart == '\t') paramStart++;
-                        ULONG64 imgBgColor = 0;
-                        ULONG imgX = 0, imgY = 0, imgW = 0, imgH = 0;
-                        ULONG imgClearScreen = 0;
-                        int converted = sscanf_s(paramStart, "%llx %x %x %x %x %u", &imgBgColor, &imgX, &imgY, &imgW, &imgH, &imgClearScreen);
-                        if (converted != 6) {
-                            ExFreePoolWithTag(image, 'DImg');
-                            Irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
-                            Irp->IoStatus.Information = 0;
-                            IoCompleteRequest(Irp, IO_NO_INCREMENT);
-                            return STATUS_INVALID_PARAMETER;
-                        }
-                        DisplayImage(image, imgBgColor, imgX, imgY, imgW, imgH, (BOOLEAN)imgClearScreen);
-                        ExFreePoolWithTag(image, 'DImg');
-                        di = paramStart;
-                        while (*di && *di != ',' && *di != '}') di++;
-                        if (*di == ',') {
-                            di++;
+                        else {
+                            CHAR* ansi = (CHAR*)ExAllocatePoolWithTag(NonPagedPool, strlen(node->StringOp.Str) + 1, 'DSpA');
+                            if (ansi) {
+                                RtlCopyMemory(ansi, node->StringOp.Str, strlen(node->StringOp.Str) + 1);
+                                ANSI_STRING ansiStr;
+                                UNICODE_STRING uniStr;
+                                RtlInitAnsiString(&ansiStr, ansi);
+                                ULONG wlen = RtlAnsiStringToUnicodeSize(&ansiStr) / sizeof(WCHAR);
+                                PWCHAR wstr = (PWCHAR)ExAllocatePoolWithTag(NonPagedPool, (wlen + 1) * sizeof(WCHAR), 'DSpW');
+                                if (wstr) {
+                                    uniStr.Buffer = wstr;
+                                    uniStr.MaximumLength = (USHORT)((wlen + 1) * sizeof(WCHAR));
+                                    if (NT_SUCCESS(RtlAnsiStringToUnicodeString(&uniStr, &ansiStr, FALSE))) {
+                                        DisplayString(wstr, node->StringOp.TextSize, node->StringOp.TbackColor, node->StringOp.TforeColor, node->StringOp.BgColor, node->StringOp.X, node->StringOp.Y, node->StringOp.ClearScreen);
+                                    }
+                                    ExFreePoolWithTag(wstr, 'DSpW');
+                                }
+                                ExFreePoolWithTag(ansi, 'DSpA');
+                            }
                         }
                     }
-                    if (*di != '}') {
-                        Irp->IoStatus.Status = STATUS_INVALID_PARAMETER;
-                        Irp->IoStatus.Information = 0;
-                        IoCompleteRequest(Irp, IO_NO_INCREMENT);
-                        return STATUS_INVALID_PARAMETER;
+                    else {
+                        ULONG* imgCopy = (ULONG*)ExAllocatePoolWithTag(NonPagedPool, node->ImageOp.Count * sizeof(ULONG), 'ImgD');
+                        if (imgCopy) {
+                            RtlCopyMemory(imgCopy, node->ImageOp.ImageData, node->ImageOp.Count * sizeof(ULONG));
+                            DisplayImage(imgCopy, node->ImageOp.BgColor, node->ImageOp.X, node->ImageOp.Y, node->ImageOp.W, node->ImageOp.H, node->ImageOp.ClearScreen);
+                            ExFreePoolWithTag(imgCopy, 'ImgD');
+                        }
+                    }
+                }
+                while (!IsListEmpty(&opListHead)) {
+                    PLIST_ENTRY entry = RemoveHeadList(&opListHead);
+                    struct _OP_NODE* node = CONTAINING_RECORD(entry, struct _OP_NODE, ListEntry);
+                    if (node->Type == 1) {
+                        if (node->StringOp.Str) ExFreePoolWithTag(node->StringOp.Str, 'DSpA');
+                    }
+                    else if (node->Type == 2) {
+                        if (node->ImageOp.ImageData) ExFreePoolWithTag(node->ImageOp.ImageData, 'ImgC');
+                    }
+                    ExFreePoolWithTag(node, 'OpNd');
+                }
+            }
+            else {
+                while (TRUE) {
+                    PLIST_ENTRY entry;
+                    for (entry = opListHead.Flink; entry != &opListHead; entry = entry->Flink) {
+                        struct _OP_NODE* node = CONTAINING_RECORD(entry, struct _OP_NODE, ListEntry);
+                        if (node->Type == 1) {
+                            if (node->StringOp.IsWin7) {
+                                CHAR* ansi = (CHAR*)ExAllocatePoolWithTag(NonPagedPool, strlen(node->StringOp.Str) + 1, 'DSpA');
+                                if (ansi) {
+                                    RtlCopyMemory(ansi, node->StringOp.Str, strlen(node->StringOp.Str) + 1);
+                                    VGAString = (UCHAR*)ansi;
+                                    VGABackColor = node->StringOp.Win7BackColor;
+                                    VGAForeColor = node->StringOp.Win7ForeColor;
+                                    VGABlink = node->StringOp.Win7Blink;
+                                    VGA80x25 = node->StringOp.Win7Vga80x25;
+                                    VGARainbow = node->StringOp.Win7Rainbow;
+                                    KeIpiGenericCall(HaltCPU, 0);
+                                    KeIpiGenericCall(Display, 0);
+                                    ExFreePoolWithTag(VGAString, 'DSpA');
+                                    VGAString = NULL;
+                                }
+                            }
+                            else {
+                                CHAR* ansi = (CHAR*)ExAllocatePoolWithTag(NonPagedPool, strlen(node->StringOp.Str) + 1, 'DSpA');
+                                if (ansi) {
+                                    RtlCopyMemory(ansi, node->StringOp.Str, strlen(node->StringOp.Str) + 1);
+                                    ANSI_STRING ansiStr;
+                                    UNICODE_STRING uniStr;
+                                    RtlInitAnsiString(&ansiStr, ansi);
+                                    ULONG wlen = RtlAnsiStringToUnicodeSize(&ansiStr) / sizeof(WCHAR);
+                                    PWCHAR wstr = (PWCHAR)ExAllocatePoolWithTag(NonPagedPool, (wlen + 1) * sizeof(WCHAR), 'DSpW');
+                                    if (wstr) {
+                                        uniStr.Buffer = wstr;
+                                        uniStr.MaximumLength = (USHORT)((wlen + 1) * sizeof(WCHAR));
+                                        if (NT_SUCCESS(RtlAnsiStringToUnicodeString(&uniStr, &ansiStr, FALSE))) DisplayString(wstr, node->StringOp.TextSize, node->StringOp.TbackColor, node->StringOp.TforeColor, node->StringOp.BgColor, node->StringOp.X, node->StringOp.Y, node->StringOp.ClearScreen);
+                                        ExFreePoolWithTag(wstr, 'DSpW');
+                                    }
+                                    ExFreePoolWithTag(ansi, 'DSpA');
+                                }
+                            }
+                        }
+                        else {
+                            ULONG* imgCopy = (ULONG*)ExAllocatePoolWithTag(NonPagedPool, node->ImageOp.Count * sizeof(ULONG), 'ImgD');
+                            if (imgCopy) {
+                                RtlCopyMemory(imgCopy, node->ImageOp.ImageData, node->ImageOp.Count * sizeof(ULONG));
+                                DisplayImage(imgCopy, node->ImageOp.BgColor, node->ImageOp.X, node->ImageOp.Y, node->ImageOp.W, node->ImageOp.H, node->ImageOp.ClearScreen);
+                                ExFreePoolWithTag(imgCopy, 'ImgD');
+                            }
+                        }
                     }
                 }
             }
