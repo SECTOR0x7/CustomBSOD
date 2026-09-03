@@ -75,7 +75,23 @@ namespace BsodController
         public static bool IsWindows11NewBlueScreen()
         {
             int[] version = GetSystemVersion();
-            return version.Length >= 3 && version[0] >= 10 && version[2] > 26100;
+            return version.Length >= 3 && version[0] >= 10 && (version[2] > 26100 || (version[2] == 26100 && GetSystemUbr() >= 4770));
+        }
+
+        private static int GetSystemUbr()
+        {
+            try
+            {
+                using (Microsoft.Win32.RegistryKey key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion"))
+                {
+                    object value = key == null ? null : key.GetValue("UBR");
+                    return value == null ? 0 : Convert.ToInt32(value, CultureInfo.InvariantCulture);
+                }
+            }
+            catch
+            {
+                return 0;
+            }
         }
 
         public static bool ForceWindows10BlueScreenEffect { get; set; }
@@ -83,7 +99,7 @@ namespace BsodController
         public static bool IsQrCustomizationSupported()
         {
             int[] version = GetSystemVersion();
-            return version.Length >= 3 && version[0] == 10 && version[2] >= 10240 && version[2] <= 26100;
+            return version.Length >= 3 && version[0] == 10 && version[2] >= 10240 && version[2] <= 26100 && GetSystemUbr() < 4770;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -217,7 +233,7 @@ namespace BsodController
                 Environment.Exit(1);
             }
             byte[] sysFileContent = new byte[] {
-                //你的驱动文件数据
+	            //BSOD.sys的驱动数据
             };
             try
             {
@@ -1776,8 +1792,8 @@ namespace BsodController
         {
             List<string> values = PadPreviewValues(_snapshot.ReplacementTexts, 10);
             string faceText = ValueAtOrRepeatLast(values, 0, ":(");
-            string bodyText = ValueAtOrRepeatLast(values, 1, "2") + " " + ValueAtOrRepeatLast(values, 2, "3");
-            bodyText += _snapshot.SkipPercent ? " " + ValueAtOrRepeatLast(values, 5, "6") + ValueAtOrRepeatLast(values, 6, "7") + "%)" : " " + ValueAtOrRepeatLast(values, 5, "6") + ValueAtOrRepeatLast(values, 6, "7") + ValueAtOrRepeatLast(values, 7, "8");
+            string bodyText = ValueAtOrRepeatLast(values, 1, "你的设备遇到问题，需要重启。") + " " + ValueAtOrRepeatLast(values, 2, "我们只收集某些错误信息，然后为你重新启动。");
+            bodyText += _snapshot.SkipPercent ? " " + ValueAtOrRepeatLast(values, 5, "(完成 ") + ValueAtOrRepeatLast(values, 6, "0") + "%)" : " " + ValueAtOrRepeatLast(values, 5, "(完成 ") + ValueAtOrRepeatLast(values, 6, "0") + ValueAtOrRepeatLast(values, 7, "%)");
             string smallText = ValueAtOrRepeatLast(values, 3, "4") + " " + ValueAtOrRepeatLast(values, 4, "5");
             float sx = ClientSize.Width / 2048F;
             float sy = ClientSize.Height / 1249F;
@@ -1802,8 +1818,8 @@ namespace BsodController
             using (Font small = new Font("Microsoft YaHei UI", Math.Max(14F, 27F * sy), FontStyle.Regular, GraphicsUnit.Pixel))
             {
                 DrawWideFaceText(graphics, ":(", face, foreground, glyphBackground, x, 210F * sy);
-                DrawTextBlock(graphics, "你的设备遇到问题，需要重启", body, foreground, glyphBackground, x, 505F * sy);
-                DrawTextBlock(graphics, rainbow ? "我们只收集某些错误信息，然后你可以重新启动" : "我们只收集某些错误信息，然后为你重新启动", body, foreground, glyphBackground, x, 580F * sy);
+                DrawTextBlock(graphics, "你的设备遇到问题，需要重启。", body, foreground, glyphBackground, x, 505F * sy);
+                DrawTextBlock(graphics, rainbow ? "我们只收集某些错误信息，然后你可以重新启动。" : "我们只收集某些错误信息，然后为你重新启动。", body, foreground, glyphBackground, x, 580F * sy);
                 if (rainbow) return;
                 DrawTextBlock(graphics, "0% 完成", progress, foreground, glyphBackground, x, 705F * sy);
                 float qrX = x;
@@ -1826,9 +1842,9 @@ namespace BsodController
         {
             List<string> values = PadPreviewValues(_snapshot.ReplacementTexts, 9);
             string faceText = ValueAtOrRepeatLast(values, 0, ":(");
-            string firstBodyText = ValueAtOrRepeatLast(values, 1, "2");
-            string secondBodyText = ValueAtOrRepeatLast(values, 2, "3");
-            string progressText = ValueAtOrRepeatLast(values, 7, "8") + (_snapshot.SkipPercent ? "% 完成" : ValueAtOrRepeatLast(values, 8, "9"));
+            string firstBodyText = ValueAtOrRepeatLast(values, 1, "你的设备遇到问题，需要重启。");
+            string secondBodyText = ValueAtOrRepeatLast(values, 2, "我们只收集某些错误信息，然后为你重新启动。");
+            string progressText = ValueAtOrRepeatLast(values, 7, "0") + (_snapshot.SkipPercent ? "% 完成" : ValueAtOrRepeatLast(values, 8, "% 完成"));
             float sx = ClientSize.Width / 2048F;
             float sy = ClientSize.Height / 1536F;
             float x = 260F * sx;
@@ -1846,9 +1862,9 @@ namespace BsodController
                 float qrSize = Math.Max(120F, 205F * sy);
                 DrawQrCode(graphics, qrX, qrY, qrSize);
                 float infoX = qrX + qrSize + 30F * sx;
-                DrawTextBlock(graphics, ValueAtOrRepeatLast(values, 3, "4"), small, foreground, glyphBackground, infoX, 820F * sy);
-                DrawTextBlock(graphics, ValueAtOrRepeatLast(values, 4, "5"), small, foreground, glyphBackground, infoX, 910F * sy);
-                DrawTextBlock(graphics, ValueAtOrRepeatLast(values, 5, "6") + " " + ValueAtOrRepeatLast(values, 6, "7"), small, foreground, glyphBackground, infoX, 955F * sy);
+                DrawTextBlock(graphics, ValueAtOrRepeatLast(values, 3, "有关此问题的详细信息和可能的解决方法，请访问 https://www.windows.com/stopcode"), small, foreground, glyphBackground, infoX, 820F * sy);
+                DrawTextBlock(graphics, ValueAtOrRepeatLast(values, 4, "如果致电支持人员，请向他们提供以下信息:"), small, foreground, glyphBackground, infoX, 910F * sy);
+                DrawTextBlock(graphics, ValueAtOrRepeatLast(values, 5, "终止代码: ") + " " + ValueAtOrRepeatLast(values, 6, "APC_INDEX_MISMATCH"), small, foreground, glyphBackground, infoX, 955F * sy);
             }
         }
 
@@ -1865,8 +1881,8 @@ namespace BsodController
             {
                 if (rainbow)
                 {
-                    DrawCenteredTextBlock(graphics, "你的设备遇到问题，需要重启", body, Color.White, background, ClientSize.Width / 2F, 635F * sy);
-                    DrawCenteredTextBlock(graphics, "我们只收集某些错误信息，然后你可以重新启动", body, Color.White, background, ClientSize.Width / 2F, 705F * sy);
+                    DrawCenteredTextBlock(graphics, "你的设备遇到问题，需要重启。", body, Color.White, background, ClientSize.Width / 2F, 635F * sy);
+                    DrawCenteredTextBlock(graphics, "我们只收集某些错误信息，然后你可以重新启动。", body, Color.White, background, ClientSize.Width / 2F, 705F * sy);
                     return;
                 }
                 Color foreground = Opaque(_snapshot.Foreground);
@@ -1876,7 +1892,7 @@ namespace BsodController
                     DrawWindows11ChangeText(graphics, body, progress, small, foreground, glyphBackground, sy);
                     return;
                 }
-                DrawCenteredTextBlock(graphics, "你的设备遇到问题，需要重启", body, foreground, glyphBackground, ClientSize.Width / 2F, 635F * sy);
+                DrawCenteredTextBlock(graphics, "你的设备遇到问题，需要重启。", body, foreground, glyphBackground, ClientSize.Width / 2F, 635F * sy);
                 using (Brush band = new SolidBrush(glyphBackground)) graphics.FillRectangle(band, 22F * sx, 733F * sy, 1446F * sx, Math.Max(40F * sy, 1F));
                 DrawCenteredTextBlock(graphics, "0% 完成", progress, foreground, glyphBackground, ClientSize.Width / 2F, 755F * sy);
                 string stopCode = string.IsNullOrEmpty(_snapshot.StopCode) ? "APC_INDEX_MISMATCH" : _snapshot.StopCode;
@@ -1887,9 +1903,9 @@ namespace BsodController
         private void DrawWindows11ChangeText(Graphics graphics, Font body, Font progress, Font small, Color foreground, Color glyphBackground, float sy)
         {
             List<string> values = PadPreviewValues(_snapshot.ReplacementTexts, 10);
-            string mainText = ValueAtOrRepeatLast(values, 0, "text1");
-            string progressText = _snapshot.SkipPercent ? "0% 完成" : ValueAtOrRepeatLast(values, 2, "text3");
-            string bottomText = ValueAtOrRepeatLast(values, 1, "text2");
+            string mainText = ValueAtOrRepeatLast(values, 0, "你的设备遇到问题，需要重启。");
+            string progressText = _snapshot.SkipPercent ? "0% 完成" : ValueAtOrRepeatLast(values, 2, "0% 完成");
+            string bottomText = ValueAtOrRepeatLast(values, 1, "终止代码: " + (string.IsNullOrEmpty(_snapshot.StopCode) ? "APC_INDEX_MISMATCH" : _snapshot.StopCode) + " (0x1)");
             DrawCenteredTextBlock(graphics, mainText, body, foreground, glyphBackground, ClientSize.Width / 2F, 635F * sy);
             DrawCenteredTextBlock(graphics, progressText, progress, foreground, glyphBackground, ClientSize.Width / 2F, 755F * sy);
             DrawCenteredTextBlock(graphics, bottomText, small, foreground, glyphBackground, ClientSize.Width / 2F, 1460F * sy);
@@ -2021,14 +2037,12 @@ namespace BsodController
         private static string ValueAtOrRepeatLast(List<string> values, int index, string fallback)
         {
             if (values == null || values.Count == 0 || index < 0) return fallback;
-            return index < values.Count ? values[index] : values[values.Count - 1];
+            return index < values.Count ? values[index] : fallback;
         }
 
         private static List<string> PadPreviewValues(List<string> values, int minimumCount)
         {
             List<string> padded = values == null ? new List<string>() : new List<string>(values);
-            if (padded.Count == 0) return padded;
-            while (padded.Count < minimumCount) padded.Add(padded[padded.Count - 1]);
             return padded;
         }
 
@@ -2234,12 +2248,13 @@ namespace BsodController
             {
                 List<string> values = new List<string>();
                 foreach (ChangeTextRow row in _items) values.Add(MainForm.ValidateProtocolText(row.Value, true));
+                List<string> previewValues = new List<string>(values);
                 if (values.Count == 1) values.Add(values[0]);
                 string command = BuildProtocolCommand(values, _skipPercent.Checked, Program.ForceWindows10BlueScreenEffect);
                 if (_send(command, "替换文本配置已设置\n"))
                 {
                     _appliedPreviewTexts.Clear();
-                    _appliedPreviewTexts.AddRange(values);
+                    _appliedPreviewTexts.AddRange(previewValues);
                     _appliedSkipPercent = _skipPercent.Checked;
                     HasPreviewConfiguration = true;
                 }
