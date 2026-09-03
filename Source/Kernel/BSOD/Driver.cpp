@@ -102,10 +102,32 @@ typedef enum _WINDOWS_VERSION {
     WIN_11_22H2,
     WIN_11_23H2,
     WIN_11_24H2,
+    WIN_11_24H2_NEW,
     WIN_11_25H2,
     WIN_11_26H1,
     WIN_11_UNKNOWN
 } WINDOWS_VERSION;
+ULONG GetWindowsUBR()
+{
+    UNICODE_STRING KeyName;
+    UNICODE_STRING ValueName;
+    OBJECT_ATTRIBUTES ObjectAttributes;
+    HANDLE KeyHandle;
+    ULONG ResultLength;
+    ULONG UBR = 0;
+    UCHAR Buffer[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(ULONG)];
+    RtlInitUnicodeString(&KeyName, L"\\Registry\\Machine\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion");
+    RtlInitUnicodeString(&ValueName, L"UBR");
+    InitializeObjectAttributes(&ObjectAttributes, &KeyName, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+    if (!NT_SUCCESS(ZwOpenKey(&KeyHandle, KEY_READ, &ObjectAttributes))) return 0;
+    NTSTATUS Status = ZwQueryValueKey(KeyHandle, &ValueName, KeyValuePartialInformation, Buffer, sizeof(Buffer), &ResultLength);
+    ZwClose(KeyHandle);
+    if (!NT_SUCCESS(Status)) return 0;
+    PKEY_VALUE_PARTIAL_INFORMATION Info = (PKEY_VALUE_PARTIAL_INFORMATION)Buffer;
+    if (Info->Type != REG_DWORD || Info->DataLength < sizeof(ULONG)) return 0;
+    RtlCopyMemory(&UBR, Info->Data, sizeof(ULONG));
+    return UBR;
+}
 WINDOWS_VERSION DetectWindowsVersion() {
     RTL_OSVERSIONINFOW ver = { 0 };
     ver.dwOSVersionInfoSize = sizeof(ver);
@@ -118,7 +140,8 @@ WINDOWS_VERSION DetectWindowsVersion() {
         if (build > 28000) return WIN_11_UNKNOWN;
         if (build >= 28000) return WIN_11_26H1;
         if (build >= 26200) return WIN_11_25H2;
-        if (build >= 26100) return WIN_11_24H2;
+        if (build == 26100 && GetWindowsUBR() >= 4770) return WIN_11_24H2_NEW;
+        if (build == 26100) return WIN_11_24H2;
         if (build >= 22631) return WIN_11_23H2;
         if (build >= 22621) return WIN_11_22H2;
         if (build >= 22000) return WIN_11_21H2;
@@ -334,8 +357,8 @@ PVOID FindFeatureEnabledBsodRejuvenation()
     if (CmpInstructionAddress == NULL) return NULL;
     ULONG CmpOffset = 0;
     WINDOWS_VERSION winver = DetectWindowsVersion();
-    if (winver < WIN_11_25H2) return NULL;
-    if (winver == WIN_11_25H2) CmpOffset = 0x22D;
+    if (winver < WIN_11_24H2_NEW) return NULL;
+    if (winver == WIN_11_25H2 || winver == WIN_11_24H2_NEW) CmpOffset = 0x22D;
     else if (winver == WIN_11_26H1) CmpOffset = 0x229;
     else if (winver > WIN_11_26H1) CmpOffset = 0x22E;
     CmpInstructionAddress = (PVOID)((ULONG_PTR)CmpInstructionAddress + CmpOffset);
@@ -419,7 +442,7 @@ PVOID FindBcpCursor() {
     if (winver == WIN_8) AddOffset = 0xEB;
     else if (winver == WIN_10) AddOffset = 0x139;
     else if (winver == WIN_11_24H2) AddOffset = 0x12B;
-    else if (winver == WIN_11_25H2) AddOffset = 0x12A;
+    else if (winver == WIN_11_25H2 || WIN_11_24H2_NEW) AddOffset = 0x12A;
     else if (winver == WIN_11_26H1) AddOffset = 0x130;
     else if (winver > WIN_11_26H1) AddOffset = 0x120;
     AddInstructionAddress = (PVOID)((ULONG_PTR)AddInstructionAddress + AddOffset);
@@ -460,7 +483,7 @@ PVOID FindBgInternal_0xF8()
     ULONG Offset;
     if (winver == WIN_10) Offset = 0x2A7;
     else if (winver == WIN_11_24H2 || winver == WIN_11_26H1) Offset = 0x279;
-    else if (winver == WIN_11_25H2) Offset = 0x273;
+    else if (winver == WIN_11_25H2 || winver == WIN_11_24H2_NEW) Offset = 0x273;
     else Offset = 0x26D;
     InstructionAddress = (PVOID)((ULONG_PTR)InstructionAddress + Offset);
     PUCHAR code = (PUCHAR)InstructionAddress;
@@ -2547,6 +2570,7 @@ NTSTATUS Read(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 }
 extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) {
     UNREFERENCED_PARAMETER(RegistryPath);
+    DbgPrintEx(77, 0, "UBR: %d\nKiDisplayBlueScreen: 0x%p\nKeGetBugMessageText: 0x%p\nBgpFwDisplayBugCheckScreen: 0x%p\nBgpClearScreen: 0x%p\nBgpTxtDisplayCharacter: 0x%p\nBgpFwAcquireLock: 0x%p\nBcpDisplayCriticalString: 0x%p\nBcpDisplayCriticalStringCentered: 0x%p\nBgpGxDrawRectangle: 0x%p\nFeatureEnabledBsodRejuvenation: 0x%p\nBcpCursor: 0x%p\nBgInternal_0xF8: 0x%p\n", GetWindowsUBR(), FindKiDisplayBlueScreen(), FindKeGetBugMessageText(), FindBgpFwDisplayBugCheckScreen(), FindBgpClearScreen(), FindBgpTxtDisplayCharacter(), FindBgpFwAcquireLock(), FindBcpDisplayCriticalString(), FindBcpDisplayCriticalStringCentered(), FindBgpGxDrawRectangle(), FindFeatureEnabledBsodRejuvenation(), FindBcpCursor(), FindBgInternal_0xF8());
     g_BgpClearScreen = FindBgpClearScreen();
     g_BgpTxtDisplayCharacter = FindBgpTxtDisplayCharacter();
     g_BcpDisplayCriticalString = FindBcpDisplayCriticalString();
