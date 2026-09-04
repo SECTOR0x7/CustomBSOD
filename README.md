@@ -87,7 +87,8 @@ Hooks are installed for:
 - **Stop code text** — the bugcheck error code string is replaced with user-defined text
 - **Background color** — the `BgpClearScreen` call is patched to use a custom background color
 - **Foreground color** — the `BgpTxtDisplayCharacter` call is patched with custom foreground/background colors (texts)
-- **Display strings** — use `BcpDisplayCriticalString` and `BcpDisplayCriticalStringCentered`
+- **Change Text** — the `BcpDisplayCriticalString` or `BcpDisplayCriticalStringCentered` call is patched with custom texts
+- **QR Code** — the `BgpFwDisplayBugCheckScreen` call is patched to use a custom picture
 
 ### 3. User-Mode GUI
 
