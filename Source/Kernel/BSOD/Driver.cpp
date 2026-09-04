@@ -351,8 +351,7 @@ PVOID FindBgpGxDrawRectangle() {
     UCHAR pattern4[] = { 0x48, 0x89, 0x5C, 0x24, 0x00, 0x55, 0x56, 0x57, 0x48, 0x81, 0xEC, 0x00, 0x00, 0x00, 0x00, 0x48, 0x8B, 0x05, 0x00, 0x00, 0x00, 0x00, 0x48, 0x33, 0xC4, 0x48, 0x89, 0x84, 0x24, 0x00, 0x00, 0x00, 0x00, 0x48, 0x8B, 0xEA, 0x48, 0x8B, 0xD9, 0x33, 0xD2, 0x48, 0x8D, 0x4C, 0x24, 0x00, 0x44, 0x8D, 0x42, 0x00, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x33, 0xFF, 0x48, 0x89, 0x7C, 0x24, 0x00, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x33, 0xF6, 0x39, 0x43, 0x00, 0x75, 0x00 };
     return FindFunction(pattern, sizeof(pattern), pattern2, sizeof(pattern2), pattern3, sizeof(pattern3), pattern4, sizeof(pattern4));
 }
-PVOID FindFeatureEnabledBsodRejuvenation()
-{
+PVOID FindFeatureEnabledBsodRejuvenation() {
     PVOID CmpInstructionAddress = FindKiDisplayBlueScreen();
     if (CmpInstructionAddress == NULL) return NULL;
     ULONG CmpOffset = 0;
@@ -381,8 +380,7 @@ PVOID FindFeatureEnabledBsodRejuvenation()
     __try {
         opcode = code[offset];
     }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
+    __except (EXCEPTION_EXECUTE_HANDLER) {
         return NULL;
     }
     if (opcode == 0x80) {
@@ -491,36 +489,29 @@ PVOID FindBgInternal_0xF8()
     UCHAR rex = 0;
     SIZE_T prefixLength = 0;
     UCHAR firstByte = 0;
-    __try
-    {
+    __try {
         firstByte = code[0];
     }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
+    __except (EXCEPTION_EXECUTE_HANDLER) {
         return NULL;
     }
-    if (firstByte >= 0x40 && firstByte <= 0x4F)
-    {
+    if (firstByte >= 0x40 && firstByte <= 0x4F) {
         rex = firstByte;
         prefixLength = 1;
     }
     UCHAR opcode = 0;
-    __try
-    {
+    __try {
         opcode = code[prefixLength];
     }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
+    __except (EXCEPTION_EXECUTE_HANDLER) {
         return NULL;
     }
     if (opcode != 0x8B) return NULL;
     UCHAR modrm = 0;
-    __try
-    {
+    __try {
         modrm = code[prefixLength + 1];
     }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
+    __except (EXCEPTION_EXECUTE_HANDLER) {
         return NULL;
     }
     UCHAR mod = (modrm >> 6) & 0x3;
@@ -532,8 +523,7 @@ PVOID FindBgInternal_0xF8()
     if (mod != 0 || rm != 5) return NULL;
     if (((rex >> 3) & 1) != 1) return NULL;
     LONG disp32 = 0;
-    __try
-    {
+    __try {
         disp32 = *(PLONG)(code + prefixLength + 2);
     }
     __except (EXCEPTION_EXECUTE_HANDLER)
