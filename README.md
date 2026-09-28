@@ -72,31 +72,7 @@ Key functions discovered:
 - `KiSetDebuggerOwner` - This function sets the current processor as the debugger owner.
 - `DpiSystemDisplayWrite` - **(Not used)** DpiSystemDisplayWrite is at a more fundamental level and is used for directly writing to the video memory. It's in `dxgkrnl.sys`, information related to `DpiSystemDisplayWrite`, visit https://github.com/WindowsKin/Bcp-Rendering-Engine-Usage-in-Windows-NT-Kernel-BSOD
 
-KeBugCheckEx
-     │
-     ▼
-KeBugCheck2
-     │
-     ├───────────────┬────────────────────┐
-     ▼               ▼                    ▼
-KiSetDebuggerOwner  KiSendFreeze      KiDisplayBlueScreen
-                                          │
-                                          ▼
-                               BgpFwDisplayBugCheckScreen
-                                          │
-                    ┌─────────────────────┼───────────────────────────────────────┐
-                    ▼                     ▼                                       ▼
-              BgpClearScreen      BcpDisplayCriticalString               BgpGxDrawRectangle
-                    │           / BcpDisplayCriticalStringCentered                │
-                    ▼                     │                                       ▼
-             BgpGxDrawRectangle           ▼                             DpiSystemDisplayWrite
-                    │              BgpTxtDisplayCharacter
-                    ▼                     │
-          DpiSystemDisplayWrite           ▼
-                                   BgpGxDrawRectangle
-                                          │
-                                          ▼
-                                  DpiSystemDisplayWrite
+![](/../main/assets/CallGraph.png)
                                 
 ### 2. Inline Hooking
 
