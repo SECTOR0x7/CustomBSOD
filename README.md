@@ -63,13 +63,41 @@ Key functions discovered:
 - `KeBugCheck2` - The functions called internally by `KeBugCheckEx`
 - `KiDisplayBlueScreen` - The function for rendering the BSOD
 - `BgpFwDisplayBugCheckScreen`- The functions called internally by `KiDisplayBlueScreen`, which is actually used for rendering the blue screen
-- `BcpDisplayCriticalString` - The function is used to render text, such as ":("
+- `BcpDisplayCriticalString` - This function is used to render text, such as ":("
 - `BcpDisplayCriticalStringCentered` - Just like `BcpDisplayCriticalString`, but it appeared after the Windows 11 25H2 version
-- `BgpClearScreen` - The function renders the background of the BSOD.
-- `BgpTxtDisplayCharacter` - The function is used to render **one** character on the BSOD.
-- `BgpGxDrawRectangle` - The function is used for writing to the video memory, it will eventually use `DpiSystemDisplayWrite`
+- `BgpClearScreen` - This function renders the background of the BSOD.
+- `BgpTxtDisplayCharacter` - This function is used to render **one** character on the BSOD.
+- `BgpGxDrawRectangle` - This function is used for writing to the `video memory`, it will eventually use `DpiSystemDisplayWrite`
+- `KiSendFreeze` - This function is used to freeze other CPUs that are not currently experiencing BSOD
+- `KiSetDebuggerOwner` - This function sets the current processor as the debugger owner.
 - `DpiSystemDisplayWrite` - **(Not used)** DpiSystemDisplayWrite is at a more fundamental level and is used for directly writing to the video memory. It's in `dxgkrnl.sys`, information related to `DpiSystemDisplayWrite`, visit https://github.com/WindowsKin/Bcp-Rendering-Engine-Usage-in-Windows-NT-Kernel-BSOD
 
+KeBugCheckEx
+     │
+     ▼
+KeBugCheck2
+     │
+     ├───────────────┬────────────────────┐
+     ▼               ▼                    ▼
+KiSetDebuggerOwner  KiSendFreeze      KiDisplayBlueScreen
+                                          │
+                                          ▼
+                               BgpFwDisplayBugCheckScreen
+                                          │
+                    ┌─────────────────────┼───────────────────────────────────────┐
+                    ▼                     ▼                                       ▼
+              BgpClearScreen      BcpDisplayCriticalString               BgpGxDrawRectangle
+                    │           / BcpDisplayCriticalStringCentered                │
+                    ▼                     │                                       ▼
+             BgpGxDrawRectangle           ▼                             DpiSystemDisplayWrite
+                    │              BgpTxtDisplayCharacter
+                    ▼                     │
+          DpiSystemDisplayWrite           ▼
+                                   BgpGxDrawRectangle
+                                          │
+                                          ▼
+                                  DpiSystemDisplayWrite
+                                
 ### 2. Inline Hooking
 
 The driver installs trampoline-based inline hooks on the discovered functions:
