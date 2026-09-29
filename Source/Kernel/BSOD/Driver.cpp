@@ -642,12 +642,12 @@ VOID PauseCPU() {
     _disable();
     __writecr8(0xF);
     ((VOID(*)(LONGLONG))FindKiSetDebuggerOwner())((LONGLONG)KeGetPcr()->CurrentPrcb);
-    UCHAR affinty[sizeof(KAFFINITY_EX) + 8];
-    RtlZeroMemory(affinty, sizeof(KAFFINITY_EX));
+    UCHAR affinity[sizeof(KAFFINITY_EX) + 8];
+    RtlZeroMemory(affinity, sizeof(KAFFINITY_EX));
     PVOID KeActiveProcessors = FindKeActiveProcessors();
-    KeCopyAffinityEx(affinty, (USHORT*)KeActiveProcessors);
-    KeRemoveProcessorAffinityEx(affinty, KeGetCurrentProcessorNumberEx(NULL));
-    ((VOID(*)(UCHAR*, CHAR))FindKiSendFreeze())(affinty, 0);
+    KeCopyAffinityEx(affinity, (USHORT*)KeActiveProcessors);
+    KeRemoveProcessorAffinityEx(affinity, KeGetCurrentProcessorNumberEx(NULL));
+    ((VOID(*)(UCHAR*, CHAR))FindKiSendFreeze())(affinity, 0);
     KeStallExecutionProcessor(1000000);
     InbvAcquireDisplayOwnership();
     Paused = TRUE;
