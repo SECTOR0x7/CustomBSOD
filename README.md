@@ -2,6 +2,11 @@
 
 A Windows kernel driver and companion user-mode application that allow you to fully customize the Blue Screen of Death (BSOD) display — change colors, modify text strings, and tailor the crash screen appearance across Windows 7 through Windows 11.
 
+# ⚠This program may be detected by PatchGuard!
+This program uses inline hook technology, which modifies the .text segment of ntoskrnl.
+PatchGuard will periodically scan the .text segment of ntoskrnl.
+Once any abnormalities are detected, it will trigger a blue screen, even if you did not manually trigger the blue screen.
+
 ## Architecture Overview
 
 ```
