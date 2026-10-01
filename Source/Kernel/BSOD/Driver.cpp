@@ -189,21 +189,18 @@ NTSTATUS WriteMemory(PVOID Address, PVOID Buffer, SIZE_T Size) {
     IoFreeMdl(mdl);
     return STATUS_SUCCESS;
 }
-BOOLEAN SafeReadMemory(PVOID Address, PVOID Buffer, SIZE_T Size)
-{
+BOOLEAN SafeReadMemory(PVOID Address, PVOID Buffer, SIZE_T Size) {
     PMDL Mdl = NULL;
     PVOID MappedAddress = NULL;
     BOOLEAN Locked = FALSE;
     if (!Address || !Buffer || Size == 0) return FALSE;
     Mdl = IoAllocateMdl(Address, (ULONG)Size, FALSE, FALSE, NULL);
     if (!Mdl) return FALSE;
-    __try
-    {
+    __try {
         MmProbeAndLockPages(Mdl, KernelMode, IoReadAccess);
         Locked = TRUE;
         MappedAddress = MmGetSystemAddressForMdlSafe(Mdl, NormalPagePriority);
-        if (!MappedAddress)
-        {
+        if (!MappedAddress) {
             if (Locked) MmUnlockPages(Mdl);
             IoFreeMdl(Mdl);
             return FALSE;
@@ -213,8 +210,7 @@ BOOLEAN SafeReadMemory(PVOID Address, PVOID Buffer, SIZE_T Size)
         IoFreeMdl(Mdl);
         return TRUE;
     }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
+    __except (EXCEPTION_EXECUTE_HANDLER) {
         if (Locked) MmUnlockPages(Mdl);
         IoFreeMdl(Mdl);
         return FALSE;
@@ -630,17 +626,24 @@ PVOID FindKeActiveProcessors()
     ULONG_PTR targetAddress = rip + instrLen + disp32;
     return (PVOID)targetAddress;
 }
+ULONG_PTR Freeze(ULONG_PTR) {
+    UCHAR freeze[] = { 0xFA, 0xEB, 0xFE, 0xEB, 0xFB };
+    PVOID execMem = ExAllocatePool(NonPagedPoolExecute, 5);
+    RtlCopyMemory(execMem, freeze, 5);
+    ((void(*)())execMem)();
+    return 0;
+}
 ULONG_PTR Disable(ULONG_PTR) {
     _disable();
     __writecr8(HIGH_LEVEL);
-    UCHAR hlt[] = { 0xFA, 0xF4, 0xEB, 0xFC, 0xC3 };
-    WriteMemory(KeBugCheckEx, hlt, 5);
+    UCHAR hlt[] = { 0xFA, 0xF4, 0xEB, 0xFA, 0xC3 };
+    WriteMemory(KeBugCheckEx, hlt, 7);
     return 0;
 }
 VOID PauseCPU() {
     if (Paused) return;
     _disable();
-    __writecr8(0xF);
+    __writecr8(HIGH_LEVEL);
     ((VOID(*)(LONGLONG))FindKiSetDebuggerOwner())((LONGLONG)KeGetPcr()->CurrentPrcb);
     UCHAR affinity[sizeof(KAFFINITY_EX) + 8];
     RtlZeroMemory(affinity, sizeof(KAFFINITY_EX));
@@ -648,6 +651,7 @@ VOID PauseCPU() {
     KeCopyAffinityEx(affinity, (USHORT*)KeActiveProcessors);
     KeRemoveProcessorAffinityEx(affinity, KeGetCurrentProcessorNumberEx(NULL));
     ((VOID(*)(UCHAR*, CHAR))FindKiSendFreeze())(affinity, 0);
+    KeIpiGenericCall(Disable, 0);
     KeStallExecutionProcessor(1000000);
     InbvAcquireDisplayOwnership();
     Paused = TRUE;
@@ -1023,7 +1027,7 @@ VOID UninstallBcpDisplayCriticalStringHook()
     g_BcpDisplayCriticalStringHookInfo.Installed = FALSE;
     InstalledBlock = NULL;
 }
-NTSTATUS InstallBcpDisplayCriticalStringHook( PVOID BcpDisplayCriticalStringAddr, BOOLEAN SkipPercentStrings, PWSTR Buffer, PWSTR* Buffers) {
+NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr, BOOLEAN SkipPercentStrings, PWSTR Buffer, PWSTR* Buffers) {
     UCHAR ExpectedBytesWin8[20] = { 0x44, 0x89, 0x44, 0x24, 0x18, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8B, 0xEC };
     UCHAR ExpectedBytesWin10[16] = { 0x44, 0x89, 0x44, 0x24, 0x18, 0x48, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54 };
     UCHAR ExpectedBytesWin11[25] = { 0x44, 0x89, 0x44, 0x24, 0x18, 0x48, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8B, 0xEC };
@@ -2386,6 +2390,8 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
                     }
                     ExFreePoolWithTag(node, 'OpNd');
                 }
+                KeIpiGenericCall(Disable, 0);
+                KeIpiGenericCall(Freeze, 0);
             }
             else {
                 while (TRUE) {
