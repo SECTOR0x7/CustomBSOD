@@ -99,7 +99,7 @@ namespace BsodController
         public static bool IsQrCustomizationSupported()
         {
             int[] version = GetSystemVersion();
-            return version.Length >= 3 && version[0] == 10 && version[2] >= 10240 && version[2] <= 26100 && GetSystemUbr() < 4770;
+            return version.Length >= 3 && version[0] == 10 && version[2] >= 10240 && version[2] <= 26100 && (version[2] == 26100 ? GetSystemUbr() < 4770 : true);
         }
 
         [StructLayout(LayoutKind.Sequential)]
