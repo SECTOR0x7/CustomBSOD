@@ -650,8 +650,8 @@ VOID PauseCPU() {
     PVOID KeActiveProcessors = FindKeActiveProcessors();
     KeCopyAffinityEx(affinity, (USHORT*)KeActiveProcessors);
     KeRemoveProcessorAffinityEx(affinity, KeGetCurrentProcessorNumberEx(NULL));
-    ((VOID(*)(UCHAR*, CHAR))FindKiSendFreeze())(affinity, 0);
     KeIpiGenericCall(Disable, 0);
+    ((VOID(*)(UCHAR*, CHAR))FindKiSendFreeze())(affinity, 0);
     KeStallExecutionProcessor(1000000);
     InbvAcquireDisplayOwnership();
     Paused = TRUE;
