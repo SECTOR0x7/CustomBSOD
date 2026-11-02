@@ -1016,8 +1016,8 @@ NTSTATUS InstallBgpTxtDisplayCharacterHook(PVOID BgpTxtDisplayCharacterAddr, ULO
 }
 VOID UninstallBcpDisplayCriticalStringHook()
 {
-    if (!g_BcpDisplayCriticalStringHookInfo.Installed) return;
     KIRQL oldIrql;
+    if (!g_BcpDisplayCriticalStringHookInfo.Installed) return;
     KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
     WriteMemory(g_BcpDisplayCriticalStringHookInfo.TargetAddress, g_BcpDisplayCriticalStringHookInfo.OriginalCode, g_BcpDisplayCriticalStringHookInfo.PatchSize);
     KeLowerIrql(oldIrql);
@@ -1027,316 +1027,289 @@ VOID UninstallBcpDisplayCriticalStringHook()
     g_BcpDisplayCriticalStringHookInfo.Installed = FALSE;
     InstalledBlock = NULL;
 }
-NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr, BOOLEAN SkipPercentStrings, PWSTR Buffer, PWSTR* Buffers) {
+NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr, ULONG Mode, PWSTR Buffer, PWSTR* Buffers) {
     UCHAR ExpectedBytesWin8[20] = { 0x44, 0x89, 0x44, 0x24, 0x18, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8B, 0xEC };
     UCHAR ExpectedBytesWin10[16] = { 0x44, 0x89, 0x44, 0x24, 0x18, 0x48, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54 };
     UCHAR ExpectedBytesWin11[25] = { 0x44, 0x89, 0x44, 0x24, 0x18, 0x48, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8B, 0xEC };
     UCHAR ExpectedBytesWin11_New[27] = { 0x44, 0x89, 0x44, 0x24, 0x18, 0x48, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8D, 0x6C, 0x24, 0xE1 };
-    ULONG MaxBuffers = 1024;
+    const ULONG MaxBuffers = 1024;
+    const SIZE_T CodeCapacity = 256;
+    ULONG FillMode;
+    BOOLEAN SkipPercent;
+    ULONG SkipAfter = 0;
+    ULONG SkipCount = 0;
+    ULONG* SkipState;
+    PWSTR Metadata;
+    PWSTR OriginalBuffer = Buffer;
+    PWSTR* OriginalBuffers = Buffers;
+    WINDOWS_VERSION winVer;
+    ULONG New = 0;
     ULONG PatchSize;
-    SIZE_T CodeSize;
     PUCHAR ExpectedBytes;
     SIZE_T ExpectedBytesSize;
-    WINDOWS_VERSION winVer = DetectWindowsVersion();
     ULONG BufferCount;
     ULONG Index;
     PWSTR CurrentBuffer;
     SIZE_T CounterOffset;
     SIZE_T TableOffset;
     SIZE_T AllocationSize;
+    SIZE_T totalStringBytes;
     PUCHAR Block;
     PUCHAR Cursor;
+    PUCHAR CodeEnd;
+    PUCHAR stringDataPtr;
     volatile ULONG64* Counter;
     PNTUNICODE_STRING StringTable;
     PUCHAR origCopy;
     UCHAR Patch[27];
     ULONG64 Value64;
     NTSTATUS Status;
-    PUCHAR JumpNullString;
-    PUCHAR JumpEmptyString;
-    PUCHAR JumpNullBuffer;
-    PUCHAR JumpPercent;
-    PUCHAR JumpScanLoop;
-    PUCHAR JumpHaveReplacement;
-    PUCHAR JumpNoReplacement;
-    PUCHAR ScanLoop;
-    PUCHAR HaveReplacement;
-    PUCHAR UseReplacement;
-    PUCHAR ContinueOriginal;
-    SIZE_T totalStringBytes;
-    PUCHAR stringDataPtr;
+    LONG_PTR Offset;
+    LONG Relative32;
+    PUCHAR JumpNullString = NULL;
+    PUCHAR JumpEmptyString = NULL;
+    PUCHAR JumpNullBuffer = NULL;
+    PUCHAR JumpPercent = NULL;
+    PUCHAR JumpScanLoop = NULL;
+    PUCHAR JumpHaveReplacement = NULL;
+    PUCHAR JumpNoReplacement = NULL;
+    PUCHAR JumpSkipOriginal = NULL;
+    PUCHAR JumpSkipDone = NULL;
+    PUCHAR JumpSkipCountdown = NULL;
+    PUCHAR SkipDone = NULL;
+    PUCHAR SkipCountdown = NULL;
+    PUCHAR ScanLoop = NULL;
+    PUCHAR HaveReplacement = NULL;
+    PUCHAR UseReplacement = NULL;
+    PUCHAR ContinueOriginal = NULL;
+    FillMode = Mode & 6;
+    if ((Mode & ~7) != 0 || FillMode == 6) return STATUS_INVALID_PARAMETER;
     if (!BcpDisplayCriticalStringAddr || !Buffer) return STATUS_INVALID_PARAMETER;
-    ULONG New = 0;
-    ReadMemory(FindFeatureEnabledBsodRejuvenation(), &New, sizeof(ULONG));
+    if (Buffer[0] == 0x1F && Buffer[1] == L'C' && Buffer[2] == L'T' && Buffer[3] == L':') {
+        if (!Buffers || !Buffers[0]) return STATUS_INVALID_PARAMETER;
+        Metadata = Buffer + 4;
+        if (*Metadata < L'0' || *Metadata > L'9') return STATUS_INVALID_PARAMETER;
+        while (*Metadata >= L'0' && *Metadata <= L'9') {
+            SkipAfter = SkipAfter * 10 + (ULONG)(*Metadata++ - L'0');
+            if (SkipAfter > MaxBuffers) return STATUS_INVALID_PARAMETER;
+        }
+        if (*Metadata != L':') return STATUS_INVALID_PARAMETER;
+        ++Metadata;
+        if (*Metadata < L'0' || *Metadata > L'9') return STATUS_INVALID_PARAMETER;
+        while (*Metadata >= L'0' && *Metadata <= L'9') {
+            SkipCount = SkipCount * 10 + (ULONG)(*Metadata++ - L'0');
+            if (SkipCount > MaxBuffers) return STATUS_INVALID_PARAMETER;
+        }
+        if (*Metadata || !SkipAfter || !SkipCount) return STATUS_INVALID_PARAMETER;
+        Buffer = Buffers[0];
+        ++Buffers;
+    }
+    SkipPercent = (BOOLEAN)((Mode & 1) != 0);
+    winVer = DetectWindowsVersion();
+    ReadMemory(FindFeatureEnabledBsodRejuvenation(), &New, sizeof(New));
     if (New == 1 && BcpDisplayCriticalStringAddr == g_BcpDisplayCriticalString) return STATUS_INVALID_PARAMETER;
-    if (winVer == WIN_8)
-    {
+    if (winVer == WIN_8) {
         ExpectedBytes = ExpectedBytesWin8;
         ExpectedBytesSize = sizeof(ExpectedBytesWin8);
         PatchSize = 20;
     }
-    else if (winVer > WIN_10 && winVer <= WIN_11_24H2)
-    {
+    else if (winVer > WIN_10 && winVer <= WIN_11_24H2) {
         ExpectedBytes = ExpectedBytesWin11;
         ExpectedBytesSize = sizeof(ExpectedBytesWin11);
         PatchSize = 25;
     }
-    else if (winVer >= WIN_11_25H2 && winVer <= WIN_11_26H1)
-    {
+    else if (winVer >= WIN_11_25H2 && winVer <= WIN_11_26H1) {
         ExpectedBytes = ExpectedBytesWin11_New;
         ExpectedBytesSize = sizeof(ExpectedBytesWin11_New);
         PatchSize = 27;
     }
-    else if (winVer > WIN_11_26H1)
-    {
+    else if (winVer > WIN_11_26H1) {
         ExpectedBytes = ExpectedBytesWin11;
         ExpectedBytesSize = sizeof(ExpectedBytesWin11);
         PatchSize = 25;
     }
-    else
-    {
+    else {
         ExpectedBytes = ExpectedBytesWin10;
         ExpectedBytesSize = sizeof(ExpectedBytesWin10);
         PatchSize = 16;
     }
-    CodeSize = 112 + PatchSize + 12 + (SkipPercentStrings ? 23 : 0);
     if (InstalledBlock)
     {
         UninstallBcpDisplayCriticalStringHook();
-        Status = InstallBcpDisplayCriticalStringHook(g_BcpDisplayCriticalString, SkipPercentStrings, Buffer, Buffers);
-        if (Status == STATUS_INVALID_PARAMETER) Status = InstallBcpDisplayCriticalStringHook(g_BcpDisplayCriticalStringCentered, SkipPercentStrings, Buffer, Buffers);
+        Status = InstallBcpDisplayCriticalStringHook(g_BcpDisplayCriticalString, Mode, OriginalBuffer, OriginalBuffers);
+        if (Status == STATUS_INVALID_PARAMETER) Status = InstallBcpDisplayCriticalStringHook(g_BcpDisplayCriticalStringCentered, Mode, OriginalBuffer, OriginalBuffers);
         return Status;
     }
     if (RtlCompareMemory(BcpDisplayCriticalStringAddr, ExpectedBytes, ExpectedBytesSize) != ExpectedBytesSize) return STATUS_NOT_SUPPORTED;
     BufferCount = 1;
-    for (Index = 0; Buffers && Buffers[Index]; ++Index)
-    {
+    for (Index = 0; Buffers && Buffers[Index]; ++Index) {
         if (BufferCount == MaxBuffers) return STATUS_BUFFER_OVERFLOW;
         ++BufferCount;
     }
     totalStringBytes = 0;
-    for (Index = 0; Index < BufferCount; ++Index)
-    {
+    for (Index = 0; Index < BufferCount; ++Index) {
         SIZE_T charCount = 0;
         CurrentBuffer = (Index == 0) ? Buffer : Buffers[Index - 1];
         if (!CurrentBuffer) return STATUS_INVALID_PARAMETER;
         while (charCount <= 0x7FFF && CurrentBuffer[charCount] != L'\0') ++charCount;
         if (charCount > 0x7FFF) return STATUS_NAME_TOO_LONG;
-        totalStringBytes += (charCount * sizeof(WCHAR)) + sizeof(WCHAR);
+        totalStringBytes += charCount * sizeof(WCHAR) + sizeof(WCHAR);
     }
-    CounterOffset = (CodeSize + sizeof(ULONG64) - 1) & ~(sizeof(ULONG64) - 1);
-    TableOffset = (CounterOffset + sizeof(ULONG64) + sizeof(ULONG64) - 1) & ~(sizeof(ULONG64) - 1);
-    AllocationSize = TableOffset + ((SIZE_T)BufferCount * sizeof(NTUNICODE_STRING)) + totalStringBytes;
+    CounterOffset = (CodeCapacity + sizeof(ULONG64) - 1) & ~(sizeof(ULONG64) - 1);
+    TableOffset = CounterOffset + sizeof(ULONG64) + 2 * sizeof(ULONG);
+    AllocationSize = TableOffset + (SIZE_T)BufferCount * sizeof(NTUNICODE_STRING) + totalStringBytes;
     Block = (PUCHAR)ExAllocatePool(NonPagedPoolExecute, AllocationSize);
     if (!Block) return STATUS_INSUFFICIENT_RESOURCES;
     origCopy = (PUCHAR)ExAllocatePoolWithTag(NonPagedPool, PatchSize, 'OgnB');
-    if (!origCopy)
-    {
+    if (!origCopy) {
         ExFreePool(Block);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     ReadMemory(BcpDisplayCriticalStringAddr, origCopy, PatchSize);
     RtlZeroMemory(Block, AllocationSize);
     Counter = (volatile ULONG64*)(Block + CounterOffset);
+    SkipState = (ULONG*)(Block + CounterOffset + sizeof(ULONG64));
+    SkipState[0] = SkipAfter;
+    SkipState[1] = SkipCount;
     StringTable = (PNTUNICODE_STRING)(Block + TableOffset);
-    stringDataPtr = Block + TableOffset + (BufferCount * sizeof(NTUNICODE_STRING));
-    for (Index = 0; Index < BufferCount; ++Index)
-    {
-        SIZE_T CharacterCount;
+    stringDataPtr = Block + TableOffset + (SIZE_T)BufferCount * sizeof(NTUNICODE_STRING);
+    for (Index = 0; Index < BufferCount; ++Index) {
+        SIZE_T CharacterCount = 0;
+        SIZE_T CopyBytes;
         USHORT ByteLength;
         CurrentBuffer = (Index == 0) ? Buffer : Buffers[Index - 1];
-        CharacterCount = 0;
         while (CharacterCount <= 0x7FFF && CurrentBuffer[CharacterCount] != L'\0') ++CharacterCount;
-        if (CharacterCount > 0x7FFF)
-        {
-            ExFreePoolWithTag(origCopy, 'OgnB');
-            ExFreePool(Block);
-            return STATUS_NAME_TOO_LONG;
+        if (CharacterCount > 0x7FFF) {
+            Status = STATUS_NAME_TOO_LONG;
+            goto Failure;
         }
         ByteLength = (USHORT)(CharacterCount * sizeof(WCHAR));
+        CopyBytes = (SIZE_T)ByteLength + sizeof(WCHAR);
+        if (CopyBytes > (SIZE_T)((Block + AllocationSize) - stringDataPtr)) {
+            Status = STATUS_BUFFER_OVERFLOW;
+            goto Failure;
+        }
         StringTable[Index].Length = ByteLength;
         StringTable[Index].MaximumLength = ByteLength;
         StringTable[Index].Padding = 0;
         StringTable[Index].Buffer = (PWSTR)stringDataPtr;
-        RtlCopyMemory(stringDataPtr, CurrentBuffer, ByteLength + sizeof(WCHAR));
-        stringDataPtr += ByteLength + sizeof(WCHAR);
+        RtlCopyMemory(stringDataPtr, CurrentBuffer, CopyBytes);
+        stringDataPtr += CopyBytes;
     }
-    JumpNullString = NULL;
-    JumpEmptyString = NULL;
-    JumpNullBuffer = NULL;
-    JumpPercent = NULL;
-    JumpScanLoop = NULL;
-    JumpHaveReplacement = NULL;
-    JumpNoReplacement = NULL;
-    ScanLoop = NULL;
-    HaveReplacement = NULL;
-    UseReplacement = NULL;
-    ContinueOriginal = NULL;
     Cursor = Block;
-#define EMIT8(Value) do { *Cursor++ = (UCHAR)(Value); } while (0)
-#define EMIT32(Value) do { ULONG EmitValue32 = (ULONG)(Value); RtlCopyMemory(Cursor, &EmitValue32, sizeof(EmitValue32)); Cursor += sizeof(EmitValue32); } while (0)
-#define EMIT64(Value) do { ULONG64 EmitValue64 = (ULONG64)(Value); RtlCopyMemory(Cursor, &EmitValue64, sizeof(EmitValue64)); Cursor += sizeof(EmitValue64); } while (0)
-    EMIT8(0x52);
-    EMIT8(0x48);
-    EMIT8(0x85);
-    EMIT8(0xC9);
-    EMIT8(0x74);
+    CodeEnd = Block + CodeCapacity;
+#define EMIT_BYTES(Bytes) do { SIZE_T EmitSize = sizeof(Bytes) - 1; if (EmitSize > (SIZE_T)(CodeEnd - Cursor)) goto InvalidGeneratedCode; RtlCopyMemory(Cursor, (Bytes), EmitSize); Cursor += EmitSize; } while (0)
+#define EMIT32(Value) do { ULONG EmitValue32 = (ULONG)(Value); if (sizeof(EmitValue32) > (SIZE_T)(CodeEnd - Cursor)) goto InvalidGeneratedCode; RtlCopyMemory(Cursor, &EmitValue32, sizeof(EmitValue32)); Cursor += sizeof(EmitValue32); } while (0)
+#define EMIT64(Value) do { ULONG64 EmitValue64 = (ULONG64)(Value); if (sizeof(EmitValue64) > (SIZE_T)(CodeEnd - Cursor)) goto InvalidGeneratedCode; RtlCopyMemory(Cursor, &EmitValue64, sizeof(EmitValue64)); Cursor += sizeof(EmitValue64); } while (0)
+#define PATCH_REL32(Jump, Target) do { Offset = (LONG_PTR)(Target) - (LONG_PTR)((Jump) + sizeof(LONG)); if (Offset < (-2147483647LL - 1) || Offset > 2147483647LL) goto InvalidGeneratedCode; Relative32 = (LONG)Offset; RtlCopyMemory((Jump), &Relative32, sizeof(Relative32)); } while (0)
+    EMIT_BYTES("\x52");
+    EMIT_BYTES("\x48\x85\xC9");
+    EMIT_BYTES("\x0F\x84");
     JumpNullString = Cursor;
-    EMIT8(0x00);
-    EMIT8(0x0F);
-    EMIT8(0xB7);
-    EMIT8(0x11);
-    EMIT8(0xD1);
-    EMIT8(0xEA);
-    EMIT8(0x74);
+    EMIT32(0);
+    EMIT_BYTES("\x0F\xB7\x11");
+    EMIT_BYTES("\xD1\xEA");
+    EMIT_BYTES("\x0F\x84");
     JumpEmptyString = Cursor;
-    EMIT8(0x00);
-    if (SkipPercentStrings)
-    {
-        EMIT8(0x48);
-        EMIT8(0x8B);
-        EMIT8(0x41);
-        EMIT8(0x08);
-        EMIT8(0x48);
-        EMIT8(0x85);
-        EMIT8(0xC0);
-        EMIT8(0x74);
+    EMIT32(0);
+    if (SkipPercent) {
+        EMIT_BYTES("\x48\x8B\x41\x08");
+        EMIT_BYTES("\x48\x85\xC0");
+        EMIT_BYTES("\x0F\x84");
         JumpNullBuffer = Cursor;
-        EMIT8(0x00);
+        EMIT32(0);
         ScanLoop = Cursor;
-        EMIT8(0x66);
-        EMIT8(0x83);
-        EMIT8(0x38);
-        EMIT8(0x25);
-        EMIT8(0x74);
+        EMIT_BYTES("\x66\x83\x38\x25");
+        EMIT_BYTES("\x0F\x84");
         JumpPercent = Cursor;
-        EMIT8(0x00);
-        EMIT8(0x48);
-        EMIT8(0x83);
-        EMIT8(0xC0);
-        EMIT8(0x02);
-        EMIT8(0xFF);
-        EMIT8(0xCA);
-        EMIT8(0x75);
+        EMIT32(0);
+        EMIT_BYTES("\x48\x83\xC0\x02");
+        EMIT_BYTES("\xFF\xCA");
+        EMIT_BYTES("\x0F\x85");
         JumpScanLoop = Cursor;
-        EMIT8(0x00);
+        EMIT32(0);
     }
     UseReplacement = Cursor;
-    EMIT8(0x49);
-    EMIT8(0xBB);
+    EMIT_BYTES("\x49\xBB");
     EMIT64(Counter);
-    EMIT8(0xF0);
-    EMIT8(0x49);
-    EMIT8(0x0F);
-    EMIT8(0xBA);
-    EMIT8(0x2B);
-    EMIT8(0x3F);
-    EMIT8(0x73);
-    EMIT8(0x04);
-    EMIT8(0xF3);
-    EMIT8(0x90);
-    EMIT8(0xEB);
-    EMIT8(0xF4);
-    EMIT8(0x4D);
-    EMIT8(0x8B);
-    EMIT8(0x13);
-    EMIT8(0x49);
-    EMIT8(0x0F);
-    EMIT8(0xBA);
-    EMIT8(0xF2);
-    EMIT8(0x3F);
-    EMIT8(0x49);
-    EMIT8(0x81);
-    EMIT8(0xFA);
+    EMIT_BYTES("\xF0\x49\x0F\xBA\x2B\x3F");
+    EMIT_BYTES("\x73\x04");
+    EMIT_BYTES("\xF3\x90");
+    EMIT_BYTES("\xEB\xF4");
+    EMIT_BYTES("\x4D\x8B\x13");
+    EMIT_BYTES("\x49\x0F\xBA\xF2\x3F");
+    if (SkipCount) {
+        EMIT_BYTES("\x48\xB8");
+        EMIT64(SkipState);
+        EMIT_BYTES("\x83\x78\x04\x00");
+        EMIT_BYTES("\x0F\x84");
+        JumpSkipDone = Cursor;
+        EMIT32(0);
+        EMIT_BYTES("\x83\x38\x00");
+        EMIT_BYTES("\x0F\x85");
+        JumpSkipCountdown = Cursor;
+        EMIT32(0);
+        EMIT_BYTES("\xFF\x48\x04");
+        EMIT_BYTES("\xF0\x49\x0F\xBA\x33\x3F");
+        EMIT_BYTES("\xE9");
+        JumpSkipOriginal = Cursor;
+        EMIT32(0);
+        SkipCountdown = Cursor;
+        EMIT_BYTES("\xFF\x08");
+        SkipDone = Cursor;
+    }
+    EMIT_BYTES("\x49\x81\xFA");
     EMIT32(BufferCount);
-    EMIT8(0x72);
+    EMIT_BYTES("\x0F\x82");
     JumpHaveReplacement = Cursor;
-    EMIT8(0x00);
-    EMIT8(0xF0);
-    EMIT8(0x49);
-    EMIT8(0x0F);
-    EMIT8(0xBA);
-    EMIT8(0x33);
-    EMIT8(0x3F);
-    EMIT8(0xEB);
-    JumpNoReplacement = Cursor;
-    EMIT8(0x00);
+    EMIT32(0);
+    if (FillMode == 2) {
+        EMIT_BYTES("\x41\xBA");
+        EMIT32(BufferCount - 1);
+    }
+    else if (FillMode == 4) EMIT_BYTES("\x45\x31\xD2");
+    else {
+        EMIT_BYTES("\xF0\x49\x0F\xBA\x33\x3F");
+        EMIT_BYTES("\xE9");
+        JumpNoReplacement = Cursor;
+        EMIT32(0);
+    }
     HaveReplacement = Cursor;
-    EMIT8(0x49);
-    EMIT8(0xC1);
-    EMIT8(0xE2);
-    EMIT8(0x04);
-    EMIT8(0x49);
-    EMIT8(0xBB);
+    EMIT_BYTES("\x49\x8D\x42\x01");
+    EMIT_BYTES("\x48\x0F\xBA\xE8\x3F");
+    EMIT_BYTES("\x49\x89\x03");
+    EMIT_BYTES("\x49\xC1\xE2\x04");
+    EMIT_BYTES("\x48\xB8");
     EMIT64(StringTable);
-    EMIT8(0x4D);
-    EMIT8(0x01);
-    EMIT8(0xD3);
-    EMIT8(0x4C);
-    EMIT8(0x89);
-    EMIT8(0xD9);
-    EMIT8(0x49);
-    EMIT8(0xBB);
-    EMIT64(Counter);
-    EMIT8(0x49);
-    EMIT8(0x8B);
-    EMIT8(0x03);
-    EMIT8(0x48);
-    EMIT8(0xFF);
-    EMIT8(0xC0);
-    EMIT8(0x48);
-    EMIT8(0x0F);
-    EMIT8(0xBA);
-    EMIT8(0xE8);
-    EMIT8(0x3F);
-    EMIT8(0x49);
-    EMIT8(0x89);
-    EMIT8(0x03);
-    EMIT8(0xF0);
-    EMIT8(0x49);
-    EMIT8(0x0F);
-    EMIT8(0xBA);
-    EMIT8(0x33);
-    EMIT8(0x3F);
+    EMIT_BYTES("\x4A\x8D\x0C\x10");
+    EMIT_BYTES("\xF0\x49\x0F\xBA\x33\x3F");
     ContinueOriginal = Cursor;
-    EMIT8(0x5A);
-    RtlCopyMemory(Cursor, ExpectedBytes, PatchSize);
+    EMIT_BYTES("\x5A");
+    if ((SIZE_T)PatchSize > (SIZE_T)(CodeEnd - Cursor)) goto InvalidGeneratedCode;
+    RtlCopyMemory(Cursor, origCopy, PatchSize);
     Cursor += PatchSize;
-    EMIT8(0x49);
-    EMIT8(0xBA);
+    EMIT_BYTES("\x49\xBA");
     EMIT64((ULONG64)((PUCHAR)BcpDisplayCriticalStringAddr + PatchSize));
-    EMIT8(0x41);
-    EMIT8(0xFF);
-    EMIT8(0xE2);
+    EMIT_BYTES("\x41\xFF\xE2");
+    PATCH_REL32(JumpNullString, UseReplacement);
+    PATCH_REL32(JumpEmptyString, ContinueOriginal);
+    if (SkipPercent)
+    {
+        PATCH_REL32(JumpNullBuffer, UseReplacement);
+        PATCH_REL32(JumpPercent, ContinueOriginal);
+        PATCH_REL32(JumpScanLoop, ScanLoop);
+    }
+    PATCH_REL32(JumpHaveReplacement, HaveReplacement);
+    if (JumpNoReplacement) PATCH_REL32(JumpNoReplacement, ContinueOriginal);
+    if (SkipCount) {
+        PATCH_REL32(JumpSkipDone, SkipDone);
+        PATCH_REL32(JumpSkipCountdown, SkipCountdown);
+        PATCH_REL32(JumpSkipOriginal, ContinueOriginal);
+    }
+#undef PATCH_REL32
 #undef EMIT64
 #undef EMIT32
-#undef EMIT8
-    LONG_PTR Offset;
-    Offset = (LONG_PTR)UseReplacement - (LONG_PTR)(JumpNullString + 1);
-    if (Offset < -128 || Offset > 127) goto InvalidGeneratedCode;
-    *JumpNullString = (UCHAR)(CHAR)Offset;
-    Offset = (LONG_PTR)ContinueOriginal - (LONG_PTR)(JumpEmptyString + 1);
-    if (Offset < -128 || Offset > 127) goto InvalidGeneratedCode;
-    *JumpEmptyString = (UCHAR)(CHAR)Offset;
-    if (SkipPercentStrings)
-    {
-        Offset = (LONG_PTR)UseReplacement - (LONG_PTR)(JumpNullBuffer + 1);
-        if (Offset < -128 || Offset > 127) goto InvalidGeneratedCode;
-        *JumpNullBuffer = (UCHAR)(CHAR)Offset;
-        Offset = (LONG_PTR)ContinueOriginal - (LONG_PTR)(JumpPercent + 1);
-        if (Offset < -128 || Offset > 127) goto InvalidGeneratedCode;
-        *JumpPercent = (UCHAR)(CHAR)Offset;
-        Offset = (LONG_PTR)ScanLoop - (LONG_PTR)(JumpScanLoop + 1);
-        if (Offset < -128 || Offset > 127) goto InvalidGeneratedCode;
-        *JumpScanLoop = (UCHAR)(CHAR)Offset;
-    }
-    Offset = (LONG_PTR)HaveReplacement - (LONG_PTR)(JumpHaveReplacement + 1);
-    if (Offset < -128 || Offset > 127) goto InvalidGeneratedCode;
-    *JumpHaveReplacement = (UCHAR)(CHAR)Offset;
-    Offset = (LONG_PTR)ContinueOriginal - (LONG_PTR)(JumpNoReplacement + 1);
-    if (Offset < -128 || Offset > 127) goto InvalidGeneratedCode;
-    *JumpNoReplacement = (UCHAR)(CHAR)Offset;
-    if ((SIZE_T)(Cursor - Block) != CodeSize) goto InvalidGeneratedCode;
+#undef EMIT_BYTES
     RtlFillMemory(Patch, sizeof(Patch), 0x90);
     Patch[0] = 0x49;
     Patch[1] = 0xBA;
@@ -1347,12 +1320,7 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
     Patch[12] = 0xE2;
     KeMemoryBarrier();
     Status = WriteMemory(BcpDisplayCriticalStringAddr, Patch, PatchSize);
-    if (!NT_SUCCESS(Status))
-    {
-        ExFreePoolWithTag(origCopy, 'OgnB');
-        ExFreePool(Block);
-        return Status;
-    }
+    if (!NT_SUCCESS(Status)) goto Failure;
     g_BcpDisplayCriticalStringHookInfo.TargetAddress = BcpDisplayCriticalStringAddr;
     g_BcpDisplayCriticalStringHookInfo.OriginalCode = origCopy;
     g_BcpDisplayCriticalStringHookInfo.PatchSize = PatchSize;
@@ -1362,11 +1330,12 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
     InstalledBlock = Block;
     return STATUS_SUCCESS;
 InvalidGeneratedCode:
+    Status = STATUS_INTERNAL_ERROR;
+Failure:
     ExFreePoolWithTag(origCopy, 'OgnB');
     ExFreePool(Block);
-    return STATUS_INTERNAL_ERROR;
+    return Status;
 }
-
 VOID UninstallBgpFwDisplayBugCheckScreenHook() {
     if (!g_BgpFwDisplayBugCheckScreenHookInfo.Installed) return;
     if (!g_BgpFwDisplayBugCheckScreenHookInfo.TargetAddress || !g_BgpFwDisplayBugCheckScreenHookInfo.OriginalCode || !g_BgpFwDisplayBugCheckScreenHookInfo.Trampoline) return;
@@ -1997,9 +1966,9 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
             p = (CHAR*)buffer + 3;
             CHAR* cur = p;
             while (*cur == ' ' || *cur == '\t') ++cur;
-            BOOLEAN skipPercent = FALSE;
-            if (*cur == '0' || *cur == '1') {
-                skipPercent = (*cur == '1') ? TRUE : FALSE;
+            ULONG Mode = 0;
+            if (*cur >= '0' && *cur <= '7') {
+                Mode = (ULONG)(*cur - '0');
                 ++cur;
             }
             PWSTR* args = NULL;
@@ -2072,7 +2041,7 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
                         Buffers = NULL;
                     }
                 }
-                if (InstallBcpDisplayCriticalStringHook(g_BcpDisplayCriticalString, skipPercent, Buffer, Buffers) == STATUS_INVALID_PARAMETER) InstallBcpDisplayCriticalStringHook(g_BcpDisplayCriticalStringCentered, skipPercent, Buffer, Buffers);
+                if (InstallBcpDisplayCriticalStringHook(g_BcpDisplayCriticalString, Mode, Buffer, Buffers) == STATUS_INVALID_PARAMETER) InstallBcpDisplayCriticalStringHook(g_BcpDisplayCriticalStringCentered, Mode, Buffer, Buffers);
                 if (bufferArray) ExFreePoolWithTag(bufferArray, 'StcA');
             }
             if (args) {
