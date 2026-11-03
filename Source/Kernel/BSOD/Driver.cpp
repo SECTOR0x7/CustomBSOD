@@ -1033,12 +1033,11 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
     UCHAR ExpectedBytesWin11[25] = { 0x44, 0x89, 0x44, 0x24, 0x18, 0x48, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8B, 0xEC };
     UCHAR ExpectedBytesWin11_New[27] = { 0x44, 0x89, 0x44, 0x24, 0x18, 0x48, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8D, 0x6C, 0x24, 0xE1 };
     const ULONG MaxBuffers = 1024;
-    const SIZE_T CodeCapacity = 256;
+    const SIZE_T CodeCapacity = 1024;
     ULONG FillMode;
     BOOLEAN SkipPercent;
     ULONG SkipAfter = 0;
     ULONG SkipCount = 0;
-    ULONG* SkipState;
     PWSTR Metadata;
     PWSTR OriginalBuffer = Buffer;
     PWSTR* OriginalBuffers = Buffers;
@@ -1048,6 +1047,7 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
     PUCHAR ExpectedBytes;
     SIZE_T ExpectedBytesSize;
     ULONG BufferCount;
+    ULONG StringCount = 0;
     ULONG Index;
     PWSTR CurrentBuffer;
     SIZE_T CounterOffset;
@@ -1070,18 +1070,19 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
     PUCHAR JumpEmptyString = NULL;
     PUCHAR JumpNullBuffer = NULL;
     PUCHAR JumpPercent = NULL;
-    PUCHAR JumpScanLoop = NULL;
+    PUCHAR JumpBeforeSkip = NULL;
+    PUCHAR JumpSkipOriginal = NULL;
     PUCHAR JumpHaveReplacement = NULL;
     PUCHAR JumpNoReplacement = NULL;
-    PUCHAR JumpSkipOriginal = NULL;
-    PUCHAR JumpSkipDone = NULL;
-    PUCHAR JumpSkipCountdown = NULL;
-    PUCHAR SkipDone = NULL;
-    PUCHAR SkipCountdown = NULL;
-    PUCHAR ScanLoop = NULL;
+    PUCHAR JumpModuloDone = NULL;
+    PUCHAR JumpExhausted = NULL;
+    PUCHAR ReplacementIndex = NULL;
+    PUCHAR ModuloDone = NULL;
     PUCHAR HaveReplacement = NULL;
+    PUCHAR LastReplacement = NULL;
     PUCHAR UseReplacement = NULL;
     PUCHAR ContinueOriginal = NULL;
+    PUCHAR OriginalCode = NULL;
     FillMode = Mode & 6;
     if ((Mode & ~7) != 0 || FillMode == 6) return STATUS_INVALID_PARAMETER;
     if (!BcpDisplayCriticalStringAddr || !Buffer) return STATUS_INVALID_PARAMETER;
@@ -1133,8 +1134,7 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
         ExpectedBytesSize = sizeof(ExpectedBytesWin10);
         PatchSize = 16;
     }
-    if (InstalledBlock)
-    {
+    if (InstalledBlock) {
         UninstallBcpDisplayCriticalStringHook();
         Status = InstallBcpDisplayCriticalStringHook(g_BcpDisplayCriticalString, Mode, OriginalBuffer, OriginalBuffers);
         if (Status == STATUS_INVALID_PARAMETER) Status = InstallBcpDisplayCriticalStringHook(g_BcpDisplayCriticalStringCentered, Mode, OriginalBuffer, OriginalBuffers);
@@ -1156,7 +1156,7 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
         totalStringBytes += charCount * sizeof(WCHAR) + sizeof(WCHAR);
     }
     CounterOffset = (CodeCapacity + sizeof(ULONG64) - 1) & ~(sizeof(ULONG64) - 1);
-    TableOffset = CounterOffset + sizeof(ULONG64) + 2 * sizeof(ULONG);
+    TableOffset = CounterOffset + sizeof(ULONG64);
     AllocationSize = TableOffset + (SIZE_T)BufferCount * sizeof(NTUNICODE_STRING) + totalStringBytes;
     Block = (PUCHAR)ExAllocatePool(NonPagedPoolExecute, AllocationSize);
     if (!Block) return STATUS_INSUFFICIENT_RESOURCES;
@@ -1168,9 +1168,7 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
     ReadMemory(BcpDisplayCriticalStringAddr, origCopy, PatchSize);
     RtlZeroMemory(Block, AllocationSize);
     Counter = (volatile ULONG64*)(Block + CounterOffset);
-    SkipState = (ULONG*)(Block + CounterOffset + sizeof(ULONG64));
-    SkipState[0] = SkipAfter;
-    SkipState[1] = SkipCount;
+    *Counter = 0;
     StringTable = (PNTUNICODE_STRING)(Block + TableOffset);
     stringDataPtr = Block + TableOffset + (SIZE_T)BufferCount * sizeof(NTUNICODE_STRING);
     for (Index = 0; Index < BufferCount; ++Index) {
@@ -1183,18 +1181,25 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
             Status = STATUS_NAME_TOO_LONG;
             goto Failure;
         }
+        if (FillMode == 4 && CharacterCount == 0) continue;
         ByteLength = (USHORT)(CharacterCount * sizeof(WCHAR));
         CopyBytes = (SIZE_T)ByteLength + sizeof(WCHAR);
         if (CopyBytes > (SIZE_T)((Block + AllocationSize) - stringDataPtr)) {
             Status = STATUS_BUFFER_OVERFLOW;
             goto Failure;
         }
-        StringTable[Index].Length = ByteLength;
-        StringTable[Index].MaximumLength = ByteLength;
-        StringTable[Index].Padding = 0;
-        StringTable[Index].Buffer = (PWSTR)stringDataPtr;
+        StringTable[StringCount].Length = ByteLength;
+        StringTable[StringCount].MaximumLength = ByteLength;
+        StringTable[StringCount].Padding = 0;
+        StringTable[StringCount].Buffer = (PWSTR)stringDataPtr;
         RtlCopyMemory(stringDataPtr, CurrentBuffer, CopyBytes);
         stringDataPtr += CopyBytes;
+        ++StringCount;
+    }
+    BufferCount = StringCount;
+    if (!BufferCount) {
+        Status = STATUS_INVALID_PARAMETER;
+        goto Failure;
     }
     Cursor = Block;
     CodeEnd = Block + CodeCapacity;
@@ -1202,14 +1207,12 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
 #define EMIT32(Value) do { ULONG EmitValue32 = (ULONG)(Value); if (sizeof(EmitValue32) > (SIZE_T)(CodeEnd - Cursor)) goto InvalidGeneratedCode; RtlCopyMemory(Cursor, &EmitValue32, sizeof(EmitValue32)); Cursor += sizeof(EmitValue32); } while (0)
 #define EMIT64(Value) do { ULONG64 EmitValue64 = (ULONG64)(Value); if (sizeof(EmitValue64) > (SIZE_T)(CodeEnd - Cursor)) goto InvalidGeneratedCode; RtlCopyMemory(Cursor, &EmitValue64, sizeof(EmitValue64)); Cursor += sizeof(EmitValue64); } while (0)
 #define PATCH_REL32(Jump, Target) do { Offset = (LONG_PTR)(Target) - (LONG_PTR)((Jump) + sizeof(LONG)); if (Offset < (-2147483647LL - 1) || Offset > 2147483647LL) goto InvalidGeneratedCode; Relative32 = (LONG)Offset; RtlCopyMemory((Jump), &Relative32, sizeof(Relative32)); } while (0)
-    EMIT_BYTES("\x52");
     EMIT_BYTES("\x48\x85\xC9");
     EMIT_BYTES("\x0F\x84");
     JumpNullString = Cursor;
     EMIT32(0);
-    EMIT_BYTES("\x0F\xB7\x11");
-    EMIT_BYTES("\xD1\xEA");
-    EMIT_BYTES("\x0F\x84");
+    EMIT_BYTES("\x66\x83\x39\x02");
+    EMIT_BYTES("\x0F\x82");
     JumpEmptyString = Cursor;
     EMIT32(0);
     if (SkipPercent) {
@@ -1218,73 +1221,98 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
         EMIT_BYTES("\x0F\x84");
         JumpNullBuffer = Cursor;
         EMIT32(0);
-        ScanLoop = Cursor;
         EMIT_BYTES("\x66\x83\x38\x25");
         EMIT_BYTES("\x0F\x84");
         JumpPercent = Cursor;
         EMIT32(0);
-        EMIT_BYTES("\x48\x83\xC0\x02");
-        EMIT_BYTES("\xFF\xCA");
-        EMIT_BYTES("\x0F\x85");
-        JumpScanLoop = Cursor;
-        EMIT32(0);
     }
     UseReplacement = Cursor;
-    EMIT_BYTES("\x49\xBB");
-    EMIT64(Counter);
-    EMIT_BYTES("\xF0\x49\x0F\xBA\x2B\x3F");
-    EMIT_BYTES("\x73\x04");
-    EMIT_BYTES("\xF3\x90");
-    EMIT_BYTES("\xEB\xF4");
-    EMIT_BYTES("\x4D\x8B\x13");
-    EMIT_BYTES("\x49\x0F\xBA\xF2\x3F");
-    if (SkipCount) {
-        EMIT_BYTES("\x48\xB8");
-        EMIT64(SkipState);
-        EMIT_BYTES("\x83\x78\x04\x00");
-        EMIT_BYTES("\x0F\x84");
-        JumpSkipDone = Cursor;
-        EMIT32(0);
-        EMIT_BYTES("\x83\x38\x00");
-        EMIT_BYTES("\x0F\x85");
-        JumpSkipCountdown = Cursor;
-        EMIT32(0);
-        EMIT_BYTES("\xFF\x48\x04");
-        EMIT_BYTES("\xF0\x49\x0F\xBA\x33\x3F");
+    EMIT_BYTES("\x52");
+    if (FillMode != 0 && BufferCount == 1 && !SkipCount) {
+        EMIT_BYTES("\x31\xC0");
         EMIT_BYTES("\xE9");
-        JumpSkipOriginal = Cursor;
+        JumpHaveReplacement = Cursor;
         EMIT32(0);
-        SkipCountdown = Cursor;
-        EMIT_BYTES("\xFF\x08");
-        SkipDone = Cursor;
     }
-    EMIT_BYTES("\x49\x81\xFA");
-    EMIT32(BufferCount);
-    EMIT_BYTES("\x0F\x82");
-    JumpHaveReplacement = Cursor;
-    EMIT32(0);
-    if (FillMode == 2) {
-        EMIT_BYTES("\x41\xBA");
-        EMIT32(BufferCount - 1);
-    }
-    else if (FillMode == 4) EMIT_BYTES("\x45\x31\xD2");
     else {
-        EMIT_BYTES("\xF0\x49\x0F\xBA\x33\x3F");
-        EMIT_BYTES("\xE9");
-        JumpNoReplacement = Cursor;
-        EMIT32(0);
+        EMIT_BYTES("\x49\xBB");
+        EMIT64(Counter);
+        if (FillMode != 4) {
+            EMIT_BYTES("\x49\x8B\x03");
+            EMIT_BYTES("\x48\x3D");
+            EMIT32((SkipAfter > BufferCount ? SkipAfter : BufferCount) + SkipCount);
+            EMIT_BYTES("\x0F\x83");
+            JumpExhausted = Cursor;
+            EMIT32(0);
+        }
+        EMIT_BYTES("\xB8");
+        EMIT32(1);
+        EMIT_BYTES("\xF0\x49\x0F\xC1\x03");
+        if (SkipCount) {
+            EMIT_BYTES("\x48\x3D");
+            EMIT32(SkipAfter);
+            EMIT_BYTES("\x0F\x82");
+            JumpBeforeSkip = Cursor;
+            EMIT32(0);
+            EMIT_BYTES("\x48\x3D");
+            EMIT32(SkipAfter + SkipCount);
+            EMIT_BYTES("\x0F\x82");
+            JumpSkipOriginal = Cursor;
+            EMIT32(0);
+            EMIT_BYTES("\x48\x2D");
+            EMIT32(SkipCount);
+        }
+        ReplacementIndex = Cursor;
+        if (FillMode == 4) {
+            if ((BufferCount & (BufferCount - 1)) == 0) {
+                EMIT_BYTES("\x25");
+                EMIT32(BufferCount - 1);
+            }
+            else {
+                EMIT_BYTES("\x49\x89\xC2");
+                EMIT_BYTES("\x49\xBB");
+                EMIT64((~(ULONG64)0) / BufferCount);
+                EMIT_BYTES("\x49\xF7\xE3");
+                EMIT_BYTES("\x48\x69\xD2");
+                EMIT32(BufferCount);
+                EMIT_BYTES("\x49\x29\xD2");
+                EMIT_BYTES("\x49\x81\xFA");
+                EMIT32(BufferCount);
+                EMIT_BYTES("\x0F\x82");
+                JumpModuloDone = Cursor;
+                EMIT32(0);
+                EMIT_BYTES("\x49\x81\xEA");
+                EMIT32(BufferCount);
+                ModuloDone = Cursor;
+                EMIT_BYTES("\x44\x89\xD0");
+            }
+        }
+        else {
+            EMIT_BYTES("\x48\x3D");
+            EMIT32(BufferCount);
+            EMIT_BYTES("\x0F\x82");
+            JumpHaveReplacement = Cursor;
+            EMIT32(0);
+            if (FillMode == 2) {
+                LastReplacement = Cursor;
+                EMIT_BYTES("\xB8");
+                EMIT32(BufferCount - 1);
+            }
+            else {
+                EMIT_BYTES("\xE9");
+                JumpNoReplacement = Cursor;
+                EMIT32(0);
+            }
+        }
     }
     HaveReplacement = Cursor;
-    EMIT_BYTES("\x49\x8D\x42\x01");
-    EMIT_BYTES("\x48\x0F\xBA\xE8\x3F");
-    EMIT_BYTES("\x49\x89\x03");
-    EMIT_BYTES("\x49\xC1\xE2\x04");
-    EMIT_BYTES("\x48\xB8");
+    EMIT_BYTES("\x48\xC1\xE0\x04");
+    EMIT_BYTES("\x49\xBB");
     EMIT64(StringTable);
-    EMIT_BYTES("\x4A\x8D\x0C\x10");
-    EMIT_BYTES("\xF0\x49\x0F\xBA\x33\x3F");
+    EMIT_BYTES("\x49\x8D\x0C\x03");
     ContinueOriginal = Cursor;
     EMIT_BYTES("\x5A");
+    OriginalCode = Cursor;
     if ((SIZE_T)PatchSize > (SIZE_T)(CodeEnd - Cursor)) goto InvalidGeneratedCode;
     RtlCopyMemory(Cursor, origCopy, PatchSize);
     Cursor += PatchSize;
@@ -1292,20 +1320,17 @@ NTSTATUS InstallBcpDisplayCriticalStringHook(PVOID BcpDisplayCriticalStringAddr,
     EMIT64((ULONG64)((PUCHAR)BcpDisplayCriticalStringAddr + PatchSize));
     EMIT_BYTES("\x41\xFF\xE2");
     PATCH_REL32(JumpNullString, UseReplacement);
-    PATCH_REL32(JumpEmptyString, ContinueOriginal);
-    if (SkipPercent)
-    {
+    PATCH_REL32(JumpEmptyString, OriginalCode);
+    if (SkipPercent) {
         PATCH_REL32(JumpNullBuffer, UseReplacement);
-        PATCH_REL32(JumpPercent, ContinueOriginal);
-        PATCH_REL32(JumpScanLoop, ScanLoop);
+        PATCH_REL32(JumpPercent, OriginalCode);
     }
-    PATCH_REL32(JumpHaveReplacement, HaveReplacement);
+    if (JumpBeforeSkip) PATCH_REL32(JumpBeforeSkip, ReplacementIndex);
+    if (JumpSkipOriginal) PATCH_REL32(JumpSkipOriginal, ContinueOriginal);
+    if (JumpHaveReplacement) PATCH_REL32(JumpHaveReplacement, HaveReplacement);
     if (JumpNoReplacement) PATCH_REL32(JumpNoReplacement, ContinueOriginal);
-    if (SkipCount) {
-        PATCH_REL32(JumpSkipDone, SkipDone);
-        PATCH_REL32(JumpSkipCountdown, SkipCountdown);
-        PATCH_REL32(JumpSkipOriginal, ContinueOriginal);
-    }
+    if (JumpModuloDone) PATCH_REL32(JumpModuloDone, ModuloDone);
+    if (JumpExhausted) PATCH_REL32(JumpExhausted, FillMode == 2 ? LastReplacement : ContinueOriginal);
 #undef PATCH_REL32
 #undef EMIT64
 #undef EMIT32
