@@ -195,40 +195,6 @@ namespace BsodController
             CloseHandle(hKey);
             return true;
         }
-        [StructLayout(LayoutKind.Sequential)]
-        private struct SYSTEM_CODEINTEGRITY_INFORMATION
-        {
-            public uint Length;
-            public uint CodeIntegrityOptions;
-        }
-
-        [DllImport("ntdll.dll")]
-        private static extern int NtQuerySystemInformation(int SystemInformationClass, IntPtr SystemInformation, uint SystemInformationLength, out uint ReturnLength);
-
-        public static uint GetCodeIntegrityOptions()
-        {
-            int size = Marshal.SizeOf(typeof(SYSTEM_CODEINTEGRITY_INFORMATION));
-            IntPtr buffer = Marshal.AllocHGlobal(size);
-            try
-            {
-                SYSTEM_CODEINTEGRITY_INFORMATION info = new SYSTEM_CODEINTEGRITY_INFORMATION { Length = (uint)size };
-
-                Marshal.StructureToPtr(info, buffer, false);
-
-                int status = NtQuerySystemInformation(103, buffer, (uint)size, out uint returnLength);
-                if (status < 0)
-                {
-                    MessageBox.Show($"NtQuerySystemInformation failed: 0x{status:X8}", "Failed!", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    Environment.Exit(1);
-                }
-                info = Marshal.PtrToStructure<SYSTEM_CODEINTEGRITY_INFORMATION>(buffer);
-                return info.CodeIntegrityOptions;
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(buffer);
-            }
-        }
 
         public static UNICODE_STRING LoadDriver()
         {
@@ -8760,19 +8726,20 @@ namespace BsodController
             RtlAdjustPrivilege(SE_LOAD_DRIVER_PRIVILEGE, true, false, out _);
             string regPath = $@"\Registry\Machine\System\CurrentControlSet\Services\{drvName}";
             RtlInitUnicodeString(out UNICODE_STRING us, regPath);
-            NtLoadDriver(ref us);
-            return us;
-        }
-        [STAThread]
-        private static void Main()
-        {
-            SetProcessDPIAware();
-            if ((GetCodeIntegrityOptions() & 0x02) != 0)
+            uint status = NtLoadDriver(ref us);
+            if (status == 0xC0000428)
             {
                 MessageBox.Show("当前系统未打开testsigning，无法正常加载驱动！\n请打开管理员cmd并输入以下命令后重启系统:\nbcdedit /set testsigning on", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 Process.Start("cmd.exe", $"/c @echo 是否执行bcdedit /set testsigning on？&@echo 按下任意键执行此命令并重启系统...&@pause>nul 2>&1&%windir%\\{(Environment.Is64BitProcess ? "System32" : "Sysnative")}\\bcdedit.exe /set testsigning on&&shutdown -r -t 0 -f||echo 设置失败！请尝试手动设置&pause>nul 2>&1");
                 Environment.Exit(1);
             }
+            return us;
+        }
+
+        [STAThread]
+        private static void Main()
+        {
+            SetProcessDPIAware();
             UNICODE_STRING us = LoadDriver();
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
@@ -10694,7 +10661,7 @@ namespace BsodController
             plus.Click += delegate { AddRow(null); };
             card.Controls.Add(plus);
             _count = Ui.Label("0 / 100", 9F, FontStyle.Bold, Ui.Muted);
-            _count.Location = new Point(134, 536);
+            _count.Location = new Point(164, 536);
             card.Controls.Add(_count);
             ModernButton apply = new ModernButton { Text = "应用全部替换文本", Location = new Point(260, 524), Size = new Size(168, 42) };
             apply.Click += delegate { Apply(); };
