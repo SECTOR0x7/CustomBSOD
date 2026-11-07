@@ -2691,6 +2691,21 @@ NTSTATUS Read(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     IoCompleteRequest(Irp, IO_NO_INCREMENT);
     return STATUS_SUCCESS;
 }
+VOID DriverUnload(PDRIVER_OBJECT DriverObject) {
+    UninstallStopCodeHook();
+    UninstallWin7StopCodeHook();
+    UninstallBgpClearScreenHook();
+    UninstallBgpTxtDisplayCharacterHook();
+    UninstallBcpDisplayCriticalStringHook();
+    UninstallBgpFwDisplayBugCheckScreenHook();
+    UNICODE_STRING linkName = RTL_CONSTANT_STRING(L"\\??\\BSOD");
+    IoDeleteSymbolicLink(&linkName);
+    if (DriverObject->DeviceObject) IoDeleteDevice(DriverObject->DeviceObject);
+    if (pVGABuffer) {
+        MmUnmapIoSpace(pVGABuffer, 8000);
+        pVGABuffer = NULL;
+    }
+}
 extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) {
     UNREFERENCED_PARAMETER(RegistryPath);
     DbgPrintEx(77, 0, "\nWindows Version: %d\n\nUBR: %d\n\n", DetectWindowsVersion(), GetWindowsUBR());
@@ -2706,17 +2721,36 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
     PHYSICAL_ADDRESS physAddr;
     physAddr.QuadPart = 0xB8000;
     pVGABuffer = (PUCHAR)MmMapIoSpace(physAddr, 8000, MmNonCached);
-    PDEVICE_OBJECT pDev = NULL;
+    if (!pVGABuffer) {
+        DbgPrintEx(77, 0, "MmMapIoSpace Failed\n");
+        return STATUS_UNSUCCESSFUL;
+    }
+    PDEVICE_OBJECT DeviceObject = NULL;
     UNICODE_STRING name = RTL_CONSTANT_STRING(L"\\Device\\N_BSOD");
     UNICODE_STRING linkName = RTL_CONSTANT_STRING(L"\\??\\BSOD");
-    IoCreateDevice(DriverObject, 0, &name, FILE_DEVICE_UNKNOWN, FILE_DEVICE_SECURE_OPEN, FALSE, &pDev);
-    IoCreateSymbolicLink(&linkName, &name);
-    if (pDev != NULL) {
+    NTSTATUS status = IoCreateDevice(DriverObject, 0, &name, FILE_DEVICE_UNKNOWN, FILE_DEVICE_SECURE_OPEN, FALSE, &DeviceObject);
+    if (!NT_SUCCESS(status)) {
+        DbgPrintEx(77, 0, "IoCreateDevice Failed\n");
+        MmUnmapIoSpace(pVGABuffer, 8000);
+        pVGABuffer = NULL;
+        return status;
+    }
+    status = IoCreateSymbolicLink(&linkName, &name);
+    if (!NT_SUCCESS(status)) {
+        DbgPrintEx(77, 0, "IoCreateSymbolicLink Failed\n");
+        MmUnmapIoSpace(pVGABuffer, 8000);
+        pVGABuffer = NULL;
+        IoDeleteDevice(DeviceObject);
+        DeviceObject = NULL;
+        return status;
+    }
+    if (DeviceObject != NULL) {
         DriverObject->MajorFunction[IRP_MJ_CREATE] = CreateOrClose;
         DriverObject->MajorFunction[IRP_MJ_CLOSE] = CreateOrClose;
         DriverObject->MajorFunction[IRP_MJ_WRITE] = Write;
         DriverObject->MajorFunction[IRP_MJ_READ] = Read;
-        pDev->Flags |= DO_BUFFERED_IO;
+        DeviceObject->Flags |= DO_BUFFERED_IO;
     }
+    DriverObject->DriverUnload = DriverUnload;
     return STATUS_SUCCESS;
 }
