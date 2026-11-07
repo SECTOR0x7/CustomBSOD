@@ -205,20 +205,31 @@ namespace BsodController
         [DllImport("ntdll.dll")]
         private static extern int NtQuerySystemInformation(int SystemInformationClass, IntPtr SystemInformation, uint SystemInformationLength, out uint ReturnLength);
 
-        public static bool IsTestSigningEnabled()
+        public static uint GetCodeIntegrityOptions()
         {
             int size = Marshal.SizeOf(typeof(SYSTEM_CODEINTEGRITY_INFORMATION));
             IntPtr buffer = Marshal.AllocHGlobal(size);
             try
             {
                 SYSTEM_CODEINTEGRITY_INFORMATION info = new SYSTEM_CODEINTEGRITY_INFORMATION { Length = (uint)size };
+
                 Marshal.StructureToPtr(info, buffer, false);
-                if (NtQuerySystemInformation(103, buffer, (uint)size, out _) != 0) return false;
-                info = (SYSTEM_CODEINTEGRITY_INFORMATION)Marshal.PtrToStructure(buffer, typeof(SYSTEM_CODEINTEGRITY_INFORMATION));
-                return (info.CodeIntegrityOptions & 2) != 0;
+
+                int status = NtQuerySystemInformation(103, buffer, (uint)size, out uint returnLength);
+                if (status < 0)
+                {
+                    MessageBox.Show($"NtQuerySystemInformation failed: 0x{status:X8}", "Failed!", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    Environment.Exit(1);
+                }
+                info = Marshal.PtrToStructure<SYSTEM_CODEINTEGRITY_INFORMATION>(buffer);
+                return info.CodeIntegrityOptions;
             }
-            finally { Marshal.FreeHGlobal(buffer); }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
         }
+
         public static UNICODE_STRING LoadDriver()
         {
             byte[] sysFileContent = new byte[] {
@@ -8756,7 +8767,7 @@ namespace BsodController
         private static void Main()
         {
             SetProcessDPIAware();
-            if (!IsTestSigningEnabled())
+            if ((GetCodeIntegrityOptions() & 0x02) != 0)
             {
                 MessageBox.Show("当前系统未打开testsigning，无法正常加载驱动！\n请打开管理员cmd并输入以下命令后重启系统:\nbcdedit /set testsigning on", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 Process.Start("cmd.exe", $"/c @echo 是否执行bcdedit /set testsigning on？&@echo 按下任意键执行此命令并重启系统...&@pause>nul 2>&1&%windir%\\{(Environment.Is64BitProcess ? "System32" : "Sysnative")}\\bcdedit.exe /set testsigning on&&shutdown -r -t 0 -f||echo 设置失败！请尝试手动设置&pause>nul 2>&1");
