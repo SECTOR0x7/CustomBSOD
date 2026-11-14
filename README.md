@@ -66,7 +66,7 @@ The driver uses byte-pattern scanning to locate undocumented internal Windows ke
 Key functions discovered:
 - `KeBugCheckEx` - The export function
 - `KeBugCheck2` - The function called internally by `KeBugCheckEx`
-- `KeGetBugMessageText` - The function retrieves the BugCheck code and converts it to the actual stop code
+- `KeGetBugMessageText` - The function retrieves the hexadecimal stop code and converts it to its string representation
 - `KiDisplayBlueScreen` - The function for rendering the BSOD
 - `BgpFwDisplayBugCheckScreen`- The functions called internally by `KiDisplayBlueScreen`, which is actually used for rendering the blue screen
 - `BcpDisplayCriticalString` - This function is used to render text, such as ":("
