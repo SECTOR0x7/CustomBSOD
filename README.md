@@ -37,7 +37,8 @@ Once any abnormalities are detected, it will trigger a **blue screen**, even if 
 
 | Feature | Description |
 |---------|-------------|
-| **Custom Stop Code Text** | Replace the default bugcheck stop code string with your own message ![](/../main/assets/sp.png) |
+| **Change Stop Code Text** | Replace the default bugcheck stop code string with your own message ![](/../main/assets/sp.png) |
+| **Change What Failed Text** | Replace the default bugcheck what failed string with your own message ![](/../main/assets/wf.png) |
 | **Background Color** | Change the BSOD background to any color ![](/../main/assets/bgc.png) |
 | **Foreground/Text Color** | Set a custom text color for the crash screen ![](/../main/assets/ftc.png) |
 | **Change BSOD Texts** | Change the BSOD text ![](/../main/assets/cbt.png) |
