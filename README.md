@@ -81,7 +81,37 @@ Key functions discovered:
 Function Call Graph:
 ![](/../main/assets/CallGraph.png)
                                 
-### 2. Inline Hooking
+### 2. Variable Discovery (Kernel)
+
+The driver selects instructions by Windows version and decodes their RIP-relative addressing to resolve BSOD-related global variable addresses.
+
+Key variables discovered:
+
+- `FeatureEnabledBsodRejuvenation` - Used by `KiDisplayBlueScreen`; `1` enables the centered Windows 11 layout, while `0` restores the Windows 10-style layout with `:(`.
+- `BcpCursor` - Used by `BgpFwDisplayBugCheckScreen`; points to the cursor state `{ ULONG X, Y, Unknown; }` for text positioning. The third field remains unconfirmed; the following code guesses the layout of `BcpCursor`:
+
+  ```c
+  ULONG BcpCursor[] = { X, Y, winver >= WIN_11_25H2 ? (winver == WIN_11_26H1 ? Y : 0) : X };
+  ```
+
+- `BgInternal+0xF8` - Used by `BgpFwDisplayBugCheckScreen`; stores the QR image descriptor pointer. Access it as a pointer-to-pointer using `*(PGP_RECT_DESC*)BgInternal_0xF8` to obtain a pointer to this structure:
+
+  ```c
+  typedef struct {
+      ULONG H;
+      ULONG W;
+      ULONG BitsPerPixel;
+      ULONG Stride;
+      ULONG Flags;
+      ULONG Padding;
+      ULONG* PixelData;
+  } GP_RECT_DESC, * PGP_RECT_DESC;
+  ```
+
+- `KeActiveProcessors` - Used by `KeBugCheck2`; records active logical processors to identify which processors to freeze, excluding the processor handling the BugCheck.
+- `KiBugCheckDriver` - Used by `KiDisplayBlueScreen`; stores a `UNICODE_STRING` pointer containing the faulting driver name for the "What Failed:" field.
+
+### 3. Inline Hooking
 
 The driver installs trampoline-based inline hooks on the discovered functions:
 
@@ -101,7 +131,7 @@ Hooks are installed for:
 - **Change Text** — the `BcpDisplayCriticalString` or `BcpDisplayCriticalStringCentered` call is patched with custom texts
 - **QR Code** — the `BgpFwDisplayBugCheckScreen` call is patched to use a custom picture
 
-### 3. User-Mode GUI
+### 4. User-Mode GUI
 
 The `CustomBSOD_v2` application provides a WinForms-based interface.
 
