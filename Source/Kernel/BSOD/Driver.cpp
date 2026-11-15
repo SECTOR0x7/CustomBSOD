@@ -34,7 +34,9 @@ static PUCHAR g_Win7StopCodeOrigCode = NULL;
 static SIZE_T g_Win7StopCodeOrigSize = 0;
 static BOOLEAN g_Win7StopCodeHooked = FALSE;
 static PWCHAR g_WhatFailedString = 0;
-static PVOID g_WhatFailedUnicodeString = 0;
+static PVOID g_WhatFailedUnicodeString = NULL;
+static PUCHAR g_WhatFailedCallInstruction = NULL;
+static PVOID g_WhatFailedCallAddress = NULL;
 PUCHAR pVGABuffer = NULL;
 UCHAR* VGAString = NULL;
 ULONG VGABackColor = NULL;
@@ -1748,6 +1750,7 @@ VOID UninstallAllHooks() {
     WriteMemory(pKiBugCheckDriver, Zero, sizeof(PVOID));
     if (g_WhatFailedString) FreePwchar(g_WhatFailedString);
     if (g_WhatFailedUnicodeString) ExFreePool(g_WhatFailedUnicodeString);
+    if (!g_WhatFailedCallAddress && !g_WhatFailedCallInstruction) WriteMemory(g_WhatFailedCallAddress, g_WhatFailedCallInstruction, 5);
     UninstallBgpClearScreenHook();
     UninstallBgpTxtDisplayCharacterHook();
     UninstallBcpDisplayCriticalStringHook();
@@ -2051,6 +2054,19 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
                     g_WhatFailedString = pUni;
                     PVOID pKiBugCheckDriver = FindKiBugCheckDriver();
                     WriteMemory(pKiBugCheckDriver, &pString, sizeof(PVOID));
+                    WINDOWS_VERSION winver = DetectWindowsVersion();
+                    ULONG Offset = 0;
+                    UCHAR nop[5];
+                    RtlFillMemory(nop, 5, 0x90);
+                    if (winver == WIN_7) Offset = 0x1EB;
+                    else if (winver == WIN_8) Offset = 0xB1;
+                    else if (winver >= WIN_10 && winver <= WIN_11_25H2) Offset = 0xDE;
+                    else if (winver == WIN_11_26H1) Offset = 0xDA;
+                    else if (winver == WIN_11_27H2) Offset = 0xDD;
+                    PVOID Address = (PVOID)((ULONG64)FindKiDisplayBlueScreen() + Offset);
+                    g_WhatFailedCallAddress = Address;
+                    ReadMemory(Address, g_WhatFailedCallInstruction, 5);
+                    WriteMemory(Address, nop, 5);
                 }
             }
         }
