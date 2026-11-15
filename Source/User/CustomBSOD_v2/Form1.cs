@@ -9522,7 +9522,7 @@ namespace BsodController
         {
             PageView page = new PageView("终止代码与失败的操作", "自定义蓝屏中显示的终止代码和失败的操作文本");
             CardPanel card = new CardPanel { Height = 240 };
-            Label title = Ui.Label("Stop Code", 13F, FontStyle.Bold, Ui.Text);
+            Label title = Ui.Label("终止代码", 13F, FontStyle.Bold, Ui.Text);
             title.Location = new Point(22, 19);
             card.Controls.Add(title);
             _stopCodeText = Ui.TextBox("CUSTOM_STOP_CODE", false);
