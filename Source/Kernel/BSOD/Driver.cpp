@@ -22,16 +22,19 @@ typedef struct _HOOK_INFO {
     SIZE_T PatchSize;
     PVOID Trampoline;
     BOOLEAN Installed;
+    PVOID Variable;
 } HOOK_INFO, * PHOOK_INFO;
-static HOOK_INFO g_StopCodeHookInfo = { NULL, NULL, 0, NULL, FALSE };
-static HOOK_INFO g_BgpClearScreenHookInfo = { NULL, NULL, 0, NULL, FALSE };
-static HOOK_INFO g_BgpTxtDisplayCharacterHookInfo = { NULL, NULL, 0, NULL, FALSE };
-static HOOK_INFO g_BcpDisplayCriticalStringHookInfo = { NULL, NULL, 0, NULL, FALSE };
-static HOOK_INFO g_BgpFwDisplayBugCheckScreenHookInfo = { NULL, NULL, 0, NULL, FALSE };
+static HOOK_INFO g_StopCodeHookInfo = { NULL, NULL, 0, NULL, FALSE, 0 };
+static HOOK_INFO g_BgpClearScreenHookInfo = { NULL, NULL, 0, NULL, FALSE, 0 };
+static HOOK_INFO g_BgpTxtDisplayCharacterHookInfo = { NULL, NULL, 0, NULL, FALSE, 0 };
+static HOOK_INFO g_BcpDisplayCriticalStringHookInfo = { NULL, NULL, 0, NULL, FALSE, 0 };
+static HOOK_INFO g_BgpFwDisplayBugCheckScreenHookInfo = { NULL, NULL, 0, NULL, FALSE, 0 };
 static PVOID  g_Win7StopCodeHookTarget = NULL;
 static PUCHAR g_Win7StopCodeOrigCode = NULL;
 static SIZE_T g_Win7StopCodeOrigSize = 0;
 static BOOLEAN g_Win7StopCodeHooked = FALSE;
+static PWCHAR g_WhatFailedString = 0;
+static PVOID g_WhatFailedUnicodeString = 0;
 PUCHAR pVGABuffer = NULL;
 UCHAR* VGAString = NULL;
 ULONG VGABackColor = NULL;
@@ -77,13 +80,11 @@ typedef enum _WINDOWS_VERSION {
     WIN_7,
     WIN_8,
     WIN_10,
-    WIN_11_21H2,
-    WIN_11_22H2,
-    WIN_11_23H2,
     WIN_11_24H2,
     WIN_11_24H2_NEW,
     WIN_11_25H2,
     WIN_11_26H1,
+    WIN_11_27H2,
     WIN_11_UNKNOWN
 } WINDOWS_VERSION;
 ULONG GetWindowsUBR()
@@ -116,31 +117,15 @@ WINDOWS_VERSION DetectWindowsVersion() {
     if (ver.dwMajorVersion >= 10)
     {
         ULONG build = ver.dwBuildNumber;
-        if (build > 28000) return WIN_11_UNKNOWN;
+        if (build > 29639) return WIN_11_UNKNOWN;
+        if (build == 29600) return WIN_11_27H2;
         if (build >= 28000) return WIN_11_26H1;
         if (build >= 26200) return WIN_11_25H2;
         if (build == 26100 && GetWindowsUBR() >= 4770) return WIN_11_24H2_NEW;
         if (build == 26100) return WIN_11_24H2;
-        if (build >= 22631) return WIN_11_23H2;
-        if (build >= 22621) return WIN_11_22H2;
-        if (build >= 22000) return WIN_11_21H2;
         if (build >= 10240) return WIN_10;
     }
     return WIN_UNKNOWN;
-}
-ULONG_PTR FindAddress(PVOID Address, unsigned char* Bin, SIZE_T size) {
-    unsigned char* BytesAddress = (unsigned char*)Address;
-    ULONG i;
-    for (ULONG find = 0; ; find++) {
-        for (i = 0; i < size; i++) {
-            if (BytesAddress[find + i] != Bin[i]) {
-                break;
-            }
-        }
-        if (i == size) {
-            return (ULONG_PTR)(BytesAddress + find);
-        }
-    }
 }
 ULONG_PTR FindAddress(PVOID Address, unsigned char* Bin, ULONG_PTR ScopeSize, ULONG_PTR BinSize) {
     unsigned char* BytesAddress = (unsigned char*)Address;
@@ -156,16 +141,6 @@ ULONG_PTR FindAddress(PVOID Address, unsigned char* Bin, ULONG_PTR ScopeSize, UL
         }
     }
     return NULL;
-}
-NTSTATUS ReadMemory(PVOID Address, PVOID Buffer, SIZE_T Size) {
-    if (!Address || !Buffer || Size == 0) return STATUS_INVALID_PARAMETER;
-    __try {
-        RtlCopyMemory(Buffer, Address, Size);
-        return STATUS_SUCCESS;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
-        return GetExceptionCode();
-    }
 }
 NTSTATUS WriteMemory(PVOID Address, PVOID Buffer, SIZE_T Size) {
     if (!Address || !Buffer || Size == 0) return STATUS_INVALID_PARAMETER;
@@ -189,7 +164,7 @@ NTSTATUS WriteMemory(PVOID Address, PVOID Buffer, SIZE_T Size) {
     IoFreeMdl(mdl);
     return STATUS_SUCCESS;
 }
-BOOLEAN SafeReadMemory(PVOID Address, PVOID Buffer, SIZE_T Size) {
+BOOLEAN ReadMemory(PVOID Address, PVOID Buffer, SIZE_T Size) {
     PMDL Mdl = NULL;
     PVOID MappedAddress = NULL;
     BOOLEAN Locked = FALSE;
@@ -216,6 +191,24 @@ BOOLEAN SafeReadMemory(PVOID Address, PVOID Buffer, SIZE_T Size) {
         return FALSE;
     }
 }
+NTSTATUS ConvertCharToPwchar(__in PCHAR AnsiStr, __deref_out PWCHAR* UnicodeBuffer) {
+    ANSI_STRING ansiStr;
+    UNICODE_STRING uniStr;
+    NTSTATUS status;
+    RtlInitAnsiString(&ansiStr, AnsiStr);
+    status = RtlAnsiStringToUnicodeString(&uniStr, &ansiStr, TRUE);
+    if (!NT_SUCCESS(status)) return status;
+    *UnicodeBuffer = uniStr.Buffer;
+    return STATUS_SUCCESS;
+}
+VOID FreePwchar(PWCHAR UnicodeBuffer)
+{
+    if (UnicodeBuffer) {
+        UNICODE_STRING str = {};
+        str.Buffer = UnicodeBuffer;
+        RtlFreeUnicodeString(&str);
+    }
+}
 typedef struct _NT_TEXT_RANGE {
     PUCHAR Base;
     SIZE_T Size;
@@ -228,18 +221,18 @@ BOOLEAN GetNtTextRange(PNT_TEXT_RANGE TextRange)
     if (!RtlPcToFileHeader((PVOID)KeBugCheckEx, &ntBase)) return FALSE;
     if (!ntBase) return FALSE;
     IMAGE_DOS_HEADER dosHeader = { 0 };
-    if (!SafeReadMemory(ntBase, &dosHeader, sizeof(dosHeader))) return FALSE;
+    if (!ReadMemory(ntBase, &dosHeader, sizeof(dosHeader))) return FALSE;
     if (dosHeader.e_magic != IMAGE_DOS_SIGNATURE) return FALSE;
     IMAGE_NT_HEADERS64 ntHeaders = { 0 };
     PVOID ntHeaderAddress = (PUCHAR)ntBase + dosHeader.e_lfanew;
-    if (!SafeReadMemory(ntHeaderAddress, &ntHeaders, sizeof(ntHeaders))) return FALSE;
+    if (!ReadMemory(ntHeaderAddress, &ntHeaders, sizeof(ntHeaders))) return FALSE;
     if (ntHeaders.Signature != IMAGE_NT_SIGNATURE) return FALSE;
     if (ntHeaders.OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) return FALSE;
     PIMAGE_SECTION_HEADER sectionHeaderAddress = (PIMAGE_SECTION_HEADER)((PUCHAR)ntHeaderAddress + FIELD_OFFSET(IMAGE_NT_HEADERS64, OptionalHeader) + ntHeaders.FileHeader.SizeOfOptionalHeader);
     for (USHORT i = 0; i < ntHeaders.FileHeader.NumberOfSections; i++)
     {
         IMAGE_SECTION_HEADER section = { 0 };
-        if (!SafeReadMemory((PUCHAR)sectionHeaderAddress + i * sizeof(IMAGE_SECTION_HEADER), &section, sizeof(section))) continue;
+        if (!ReadMemory((PUCHAR)sectionHeaderAddress + i * sizeof(IMAGE_SECTION_HEADER), &section, sizeof(section))) continue;
         if (section.Name[0] == '.' &&
             section.Name[1] == 't' &&
             section.Name[2] == 'e' &&
@@ -558,7 +551,7 @@ PVOID FindKeActiveProcessors()
     if (winver == WIN_8) InstructionOffset = 0x8E6;
     else if (winver == WIN_10) InstructionOffset = 0x9D4;
     else if (winver >= WIN_11_24H2 && winver <= WIN_11_26H1) InstructionOffset = 0xD1F;
-    else if (winver == WIN_11_UNKNOWN) InstructionOffset = 0xC7D;
+    else if (winver == WIN_11_27H2) InstructionOffset = 0xC7D;
     InstructionAddress = (PVOID)((ULONG_PTR)InstructionAddress + InstructionOffset);
     PUCHAR code = (PUCHAR)InstructionAddress;
     ULONG_PTR rip = (ULONG_PTR)InstructionAddress;
@@ -626,6 +619,64 @@ PVOID FindKeActiveProcessors()
     ULONG_PTR targetAddress = rip + instrLen + disp32;
     return (PVOID)targetAddress;
 }
+PVOID FindKiBugCheckDriver() {
+    PVOID InstructionAddress = FindKiDisplayBlueScreen();
+    if (InstructionAddress == NULL) return NULL;
+    ULONG Offset = 0;
+    WINDOWS_VERSION winver = DetectWindowsVersion();
+    if (winver == WIN_7) Offset = 0xC6;
+    else if (winver == WIN_8) Offset = 0x96;
+    else if (winver == WIN_10) Offset = 0xE3;
+    else if (winver == WIN_11_24H2 || winver == WIN_11_24H2_NEW) Offset = 0xC0;
+    else if (winver == WIN_11_26H1) Offset = 0xBC;
+    else if (winver == WIN_11_27H2) Offset = 0xBE;
+    else return NULL;
+    InstructionAddress = (PVOID)((ULONG_PTR)InstructionAddress + Offset);
+    PUCHAR code = (PUCHAR)InstructionAddress;
+    ULONG_PTR rip = (ULONG_PTR)InstructionAddress;
+    UCHAR first = 0;
+    __try {
+        first = code[0];
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return NULL;
+    }
+    SIZE_T prefix = 0;
+    UCHAR rex = 0;
+    if (first >= 0x40 && first <= 0x4F) { rex = first; prefix = 1; }
+    UCHAR opcode = 0;
+    UCHAR modrm = 0;
+    __try {
+        opcode = code[prefix]; modrm = code[prefix + 1];
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return NULL;
+    }
+    UCHAR mod = (modrm >> 6) & 0x3;
+    UCHAR reg = (modrm >> 3) & 0x7;
+    UCHAR rm = modrm & 0x7;
+    UCHAR rexR = (rex >> 2) & 1;
+    UCHAR actualReg = (rexR << 3) | reg;
+    if (mod != 0 || rm != 5) return NULL;
+    LONG disp32 = 0;
+    SIZE_T dispOffset = 0;
+    SIZE_T instructionLength = 0;
+    if (opcode == 0x83) {
+        if (actualReg != 7) return NULL;
+        dispOffset = prefix + 2;
+        instructionLength = prefix + 7;
+    }
+    else if (opcode == 0x8B) {
+        if (actualReg != 3) return NULL;
+        dispOffset = prefix + 2;
+        instructionLength = prefix + 6;
+    }
+    else return NULL;
+    __try { disp32 = *(PLONG)(code + dispOffset); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return NULL; }
+    ULONG_PTR targetAddress = rip + instructionLength + disp32;
+    return (PVOID)targetAddress;
+}
 ULONG_PTR Freeze(ULONG_PTR) {
     UCHAR freeze[] = { 0xFA, 0xEB, 0xFE, 0xEB, 0xFB };
     PVOID execMem = ExAllocatePool(NonPagedPoolExecute, 5);
@@ -669,6 +720,11 @@ VOID UninstallStopCodeHook()
     KeLowerIrql(oldIrql);
     ExFreePoolWithTag(g_StopCodeHookInfo.Trampoline, 'pmrT');
     ExFreePoolWithTag(g_StopCodeHookInfo.OriginalCode, 'OgnS');
+    if (g_StopCodeHookInfo.Variable) {
+        UNICODE_STRING str = {};
+        str.Buffer = (PWCHAR)g_StopCodeHookInfo.Variable;
+        RtlFreeUnicodeString(&str);
+    }
     RtlZeroMemory(&g_StopCodeHookInfo, sizeof(g_StopCodeHookInfo));
     g_StopCodeHookInfo.Installed = FALSE;
 }
@@ -677,6 +733,7 @@ NTSTATUS InstallStopCodeHook(PVOID TargetFunction, PWCHAR NewString, SIZE_T Char
     if (!TargetFunction || !NewString || CharCount < 1) return STATUS_INVALID_PARAMETER;
     if (CharCount * sizeof(WCHAR) > 0xFFFF) return STATUS_INVALID_PARAMETER;
     if (g_StopCodeHookInfo.Installed) { UninstallStopCodeHook(); return InstallStopCodeHook(TargetFunction, NewString, CharCount); }
+    g_StopCodeHookInfo.Variable = NewString;
     WINDOWS_VERSION WinVer = DetectWindowsVersion();
     BOOLEAN isWin11_27H2 = WinVer > WIN_11_26H1;
     WORD byteLen = (WORD)(CharCount * sizeof(WCHAR));
@@ -707,6 +764,7 @@ NTSTATUS InstallStopCodeHook(PVOID TargetFunction, PWCHAR NewString, SIZE_T Char
     PUCHAR tramp = (PUCHAR)ExAllocatePoolWithTag(NonPagedPoolExecute, trampSize, 'pmrT');
     if (!tramp) {
         ExFreePoolWithTag(strBuf, 'grtS');
+        FreePwchar(NewString);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     RtlZeroMemory(tramp, trampSize);
@@ -714,6 +772,7 @@ NTSTATUS InstallStopCodeHook(PVOID TargetFunction, PWCHAR NewString, SIZE_T Char
     if (!origCopy) {
         ExFreePoolWithTag(tramp, 'pmrT');
         ExFreePoolWithTag(strBuf, 'grtS');
+        FreePwchar(NewString);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     RtlCopyMemory(origCopy, original, origSize);
@@ -825,6 +884,7 @@ NTSTATUS InstallStopCodeHook(PVOID TargetFunction, PWCHAR NewString, SIZE_T Char
         ExFreePoolWithTag(tramp, 'pmrT');
         ExFreePoolWithTag(strBuf, 'grtS');
         ExFreePoolWithTag(origCopy, 'OgnS');
+        FreePwchar(NewString);
         return status;
     }
     g_StopCodeHookInfo.TargetAddress = hookPoint;
@@ -1512,16 +1572,6 @@ VOID DisplayImage(ULONG* Image, ULONG64 bgColor, ULONG X, ULONG Y, ULONG W, ULON
     pDstInfo.DstY = Y;
     BgpGxDrawRectangle(&pSrcInfo, &pDstInfo);
 }
-NTSTATUS ConvertCharToPwchar(__in PCHAR AnsiStr, __deref_out PWCHAR* UnicodeBuffer) {
-    ANSI_STRING ansiStr;
-    UNICODE_STRING uniStr;
-    NTSTATUS status;
-    RtlInitAnsiString(&ansiStr, AnsiStr);
-    status = RtlAnsiStringToUnicodeString(&uniStr, &ansiStr, TRUE);
-    if (!NT_SUCCESS(status)) return status;
-    *UnicodeBuffer = uniStr.Buffer;
-    return STATUS_SUCCESS;
-}
 VOID RainbowBSOD(KBUGCHECK_CALLBACK_REASON Reason, struct _KBUGCHECK_REASON_CALLBACK_RECORD* Record, PVOID ReasonSpecificData, ULONG ReasonSpecificDataLength) {
     ULONG dword_180004144 = 0;
     ULONG dword_180004140 = 0;
@@ -1689,7 +1739,22 @@ VOID UninstallWin7StopCodeHook()
     g_Win7StopCodeOrigSize = 0;
     g_Win7StopCodeHooked = FALSE;
 }
-void WriteVGAVideoMemory(UCHAR* String, ULONG BackColor, ULONG TextColor, BOOLEAN Blink) {
+VOID UninstallAllHooks() {
+    UninstallStopCodeHook();
+    UninstallWin7StopCodeHook();
+    PVOID pKiBugCheckDriver = FindKiBugCheckDriver();
+    UCHAR Zero[8];
+    RtlZeroMemory(Zero, 8);
+    WriteMemory(pKiBugCheckDriver, Zero, sizeof(PVOID));
+    if (g_WhatFailedString) FreePwchar(g_WhatFailedString);
+    if (g_WhatFailedUnicodeString) ExFreePool(g_WhatFailedUnicodeString);
+    UninstallBgpClearScreenHook();
+    UninstallBgpTxtDisplayCharacterHook();
+    UninstallBcpDisplayCriticalStringHook();
+    UninstallBgpFwDisplayBugCheckScreenHook();
+    KeInvalidateAllCaches();
+}
+VOID WriteVGAVideoMemory(UCHAR* String, ULONG BackColor, ULONG TextColor, BOOLEAN Blink) {
     InbvAcquireDisplayOwnership();
     UCHAR BackColorCache;
     UCHAR TextColorCache;
@@ -1929,7 +1994,7 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
     PVOID buffer = Irp->AssociatedIrp.SystemBuffer;
     if (buffer) {
         CHAR* p = (CHAR*)buffer;
-        if (p[0] == 'S' && p[1] == 'P' && p[2] == ' ') { //StopCode
+        if (p[0] == 'S' && p[1] == 'P' && p[2] == ' ') { //Stop Code String
             p = (CHAR*)buffer + 3;
             PWCHAR pUni = NULL;
             if (NT_SUCCESS(ConvertCharToPwchar(p, &pUni))) {
@@ -1955,7 +2020,7 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
                         stopcodetext[bufLen] = '\0';
                         *(ULONG_PTR*)&mov[2] = (ULONG_PTR)stopcodetext;
                         RtlMoveMemory(stopcode + (sizeof(pattern) / sizeof(unsigned char) - sizeof(mov) / sizeof(unsigned char)), mov, sizeof(mov) / sizeof(unsigned char));
-                        ULONG_PTR StopcodeAddress = FindAddress(pKiDisplayBlueScreen, pattern, sizeof(pattern) / sizeof(unsigned char));
+                        ULONG_PTR StopcodeAddress = FindAddress(pKiDisplayBlueScreen, pattern, 0x10000, sizeof(pattern) / sizeof(unsigned char));
                         ULONG patternLen = sizeof(pattern) / sizeof(unsigned char);
                         SIZE_T origSize = patternLen;
                         PUCHAR origWin7 = (PUCHAR)ExAllocatePoolWithTag(NonPagedPool, origSize, 'Ogn7');
@@ -1972,6 +2037,20 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
                             g_Win7StopCodeHooked = TRUE;
                         }
                     }
+                }
+            }
+        }
+        else if (p[0] == 'W' && p[1] == 'F' && p[2] == ' ') { //What Failed String
+            p = (CHAR*)buffer + 3;
+            PWCHAR pUni = NULL;
+            if (NT_SUCCESS(ConvertCharToPwchar(p, &pUni))) {
+                g_WhatFailedUnicodeString = ExAllocatePool(NonPagedPool, sizeof(UNICODE_STRING));
+                PUNICODE_STRING pString = (PUNICODE_STRING)g_WhatFailedUnicodeString;
+                if (pString) {
+                    RtlInitUnicodeString(pString, pUni);
+                    g_WhatFailedString = pUni;
+                    PVOID pKiBugCheckDriver = FindKiBugCheckDriver();
+                    WriteMemory(pKiBugCheckDriver, &pString, sizeof(PVOID));
                 }
             }
         }
@@ -2673,6 +2752,7 @@ NTSTATUS Write(struct _DEVICE_OBJECT* DeviceObject, struct _IRP* Irp) {
                 ZwClose(volumeHandle);
             }
         }
+        else if (p[0] == 'R' && p[1] == 'E') UninstallAllHooks();
     }
     Irp->IoStatus.Status = STATUS_SUCCESS;
     Irp->IoStatus.Information = 0;
@@ -2692,12 +2772,7 @@ NTSTATUS Read(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     return STATUS_SUCCESS;
 }
 VOID DriverUnload(PDRIVER_OBJECT DriverObject) {
-    UninstallStopCodeHook();
-    UninstallWin7StopCodeHook();
-    UninstallBgpClearScreenHook();
-    UninstallBgpTxtDisplayCharacterHook();
-    UninstallBcpDisplayCriticalStringHook();
-    UninstallBgpFwDisplayBugCheckScreenHook();
+    UninstallAllHooks();
     UNICODE_STRING linkName = RTL_CONSTANT_STRING(L"\\??\\BSOD");
     IoDeleteSymbolicLink(&linkName);
     if (DriverObject->DeviceObject) IoDeleteDevice(DriverObject->DeviceObject);
@@ -2709,8 +2784,8 @@ VOID DriverUnload(PDRIVER_OBJECT DriverObject) {
 extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) {
     UNREFERENCED_PARAMETER(RegistryPath);
     DbgPrintEx(77, 0, "\nWindows Version: %d\n\nUBR: %d\n\n", DetectWindowsVersion(), GetWindowsUBR());
-    DbgPrintEx(77, 0, "Functions:\n\nKeBugCheck2: 0x%p\nKiDisplayBlueScreen: 0x%p\nKeGetBugMessageText: 0x%p\nBgpFwDisplayBugCheckScreen: 0x%p\nBgpClearScreen: 0x%p\nBgpTxtDisplayCharacter: 0x%p\nBgpFwAcquireLock: 0x%p\nBcpDisplayCriticalString: 0x%p\n*BcpDisplayCriticalStringCentered: 0x%p\nBgpGxDrawRectangle: 0x%p\n", FindKeBugCheck2(), FindKiDisplayBlueScreen(), FindKeGetBugMessageText(), FindBgpFwDisplayBugCheckScreen(), FindBgpClearScreen(), FindBgpTxtDisplayCharacter(), FindBgpFwAcquireLock(), FindBcpDisplayCriticalString(), FindBcpDisplayCriticalStringCentered(), FindBgpGxDrawRectangle());
-    DbgPrintEx(77, 0, "KiSendFreeze: 0x%p\nKiSetDebuggerOwner: 0x%p\n\nVariables:\n\n*FeatureEnabledBsodRejuvenation: 0x%p\nBcpCursor: 0x%p\n#BgInternal_0xF8: 0x%p\nKeActiveProcessors: 0x%p\n\n", FindKiSendFreeze(), FindKiSetDebuggerOwner(), FindFeatureEnabledBsodRejuvenation(), FindBcpCursor(), FindBgInternal_0xF8(), FindKeActiveProcessors());
+    DbgPrintEx(77, 0, "Functions:\n\nKeBugCheck2: 0x%p\nKeGetBugMessageText: 0x%p\nKiDisplayBlueScreen: 0x%p\nBgpFwDisplayBugCheckScreen: 0x%p\nBgpClearScreen: 0x%p\nBgpTxtDisplayCharacter: 0x%p\nBgpFwAcquireLock: 0x%p\nBcpDisplayCriticalString: 0x%p\n*BcpDisplayCriticalStringCentered: 0x%p\nBgpGxDrawRectangle: 0x%p\n", FindKeBugCheck2(), FindKiDisplayBlueScreen(), FindKeGetBugMessageText(), FindBgpFwDisplayBugCheckScreen(), FindBgpClearScreen(), FindBgpTxtDisplayCharacter(), FindBgpFwAcquireLock(), FindBcpDisplayCriticalString(), FindBcpDisplayCriticalStringCentered(), FindBgpGxDrawRectangle());
+    DbgPrintEx(77, 0, "KiSendFreeze: 0x%p\nKiSetDebuggerOwner: 0x%p\n\nVariables:\n\n*FeatureEnabledBsodRejuvenation: 0x%p\nBcpCursor: 0x%p\n#BgInternal_0xF8: 0x%p\nKeActiveProcessors: 0x%p\nKiBugCheckDriver: 0x%p\n\n", FindKiSendFreeze(), FindKiSetDebuggerOwner(), FindFeatureEnabledBsodRejuvenation(), FindBcpCursor(), FindBgInternal_0xF8(), FindKeActiveProcessors(), FindKiBugCheckDriver());
     g_BgpClearScreen = FindBgpClearScreen();
     g_BgpTxtDisplayCharacter = FindBgpTxtDisplayCharacter();
     g_BcpDisplayCriticalString = FindBcpDisplayCriticalString();
