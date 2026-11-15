@@ -35,7 +35,7 @@ static SIZE_T g_Win7StopCodeOrigSize = 0;
 static BOOLEAN g_Win7StopCodeHooked = FALSE;
 static PWCHAR g_WhatFailedString = 0;
 static PVOID g_WhatFailedUnicodeString = NULL;
-static PUCHAR g_WhatFailedCallInstruction = NULL;
+static UCHAR g_WhatFailedCallInstruction[5] = { 0 };
 static PVOID g_WhatFailedCallAddress = NULL;
 PUCHAR pVGABuffer = NULL;
 UCHAR* VGAString = NULL;
@@ -1750,7 +1750,7 @@ VOID UninstallAllHooks() {
     WriteMemory(pKiBugCheckDriver, Zero, sizeof(PVOID));
     if (g_WhatFailedString) FreePwchar(g_WhatFailedString);
     if (g_WhatFailedUnicodeString) ExFreePool(g_WhatFailedUnicodeString);
-    if (!g_WhatFailedCallAddress && !g_WhatFailedCallInstruction) WriteMemory(g_WhatFailedCallAddress, g_WhatFailedCallInstruction, 5);
+    if (g_WhatFailedCallAddress && g_WhatFailedCallInstruction) WriteMemory(g_WhatFailedCallAddress, g_WhatFailedCallInstruction, 5);
     UninstallBgpClearScreenHook();
     UninstallBgpTxtDisplayCharacterHook();
     UninstallBcpDisplayCriticalStringHook();
