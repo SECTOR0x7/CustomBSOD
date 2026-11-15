@@ -9396,7 +9396,7 @@ namespace BsodController
                 { "qr", "修改二维码" },
                 { "display", "显示字符串/图片" },
                 { "effects", "特效与触发" },
-                { "manual", "手动命令" }
+                { "manual", "手动发送命令" }
             };
             int y = 102;
             for (int i = 0; i < nav.GetLength(0); i++)
