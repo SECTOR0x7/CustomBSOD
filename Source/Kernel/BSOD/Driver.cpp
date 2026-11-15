@@ -118,7 +118,7 @@ WINDOWS_VERSION DetectWindowsVersion() {
     {
         ULONG build = ver.dwBuildNumber;
         if (build > 29639) return WIN_11_UNKNOWN;
-        if (build == 29600) return WIN_11_27H2;
+        if (build == 29639) return WIN_11_27H2;
         if (build >= 28000) return WIN_11_26H1;
         if (build >= 26200) return WIN_11_25H2;
         if (build == 26100 && GetWindowsUBR() >= 4770) return WIN_11_24H2_NEW;
