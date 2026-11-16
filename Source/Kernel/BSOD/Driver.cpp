@@ -1748,8 +1748,8 @@ VOID UninstallAllHooks() {
     UCHAR Zero[8];
     RtlZeroMemory(Zero, 8);
     WriteMemory(pKiBugCheckDriver, Zero, sizeof(PVOID));
-    if (g_WhatFailedString) FreePwchar(g_WhatFailedString);
-    if (g_WhatFailedUnicodeString) ExFreePool(g_WhatFailedUnicodeString);
+    if (g_WhatFailedString) { FreePwchar(g_WhatFailedString); g_WhatFailedString = NULL; }
+    if (g_WhatFailedUnicodeString) { ExFreePool(g_WhatFailedUnicodeString); g_WhatFailedUnicodeString = NULL; }
     if (g_WhatFailedCallAddress && g_WhatFailedCallInstruction) WriteMemory(g_WhatFailedCallAddress, g_WhatFailedCallInstruction, 5);
     UninstallBgpClearScreenHook();
     UninstallBgpTxtDisplayCharacterHook();
@@ -2796,9 +2796,11 @@ VOID DriverUnload(PDRIVER_OBJECT DriverObject) {
         MmUnmapIoSpace(pVGABuffer, 8000);
         pVGABuffer = NULL;
     }
+    DbgPrintEx(77, 0, "\nCustomBSOD Driver Unloaded\n");
 }
 extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) {
     UNREFERENCED_PARAMETER(RegistryPath);
+    DbgPrintEx(77, 0, "\nCustomBSOD Driver Loaded\n");
     DbgPrintEx(77, 0, "\nWindows Version: %d\n\nUBR: %d\n\n", DetectWindowsVersion(), GetWindowsUBR());
     DbgPrintEx(77, 0, "Functions:\n\nKeBugCheck2: 0x%p\nKeGetBugMessageText: 0x%p\nKiDisplayBlueScreen: 0x%p\nBgpFwDisplayBugCheckScreen: 0x%p\nBgpClearScreen: 0x%p\nBgpTxtDisplayCharacter: 0x%p\nBgpFwAcquireLock: 0x%p\nBcpDisplayCriticalString: 0x%p\n*BcpDisplayCriticalStringCentered: 0x%p\nBgpGxDrawRectangle: 0x%p\n", FindKeBugCheck2(), FindKiDisplayBlueScreen(), FindKeGetBugMessageText(), FindBgpFwDisplayBugCheckScreen(), FindBgpClearScreen(), FindBgpTxtDisplayCharacter(), FindBgpFwAcquireLock(), FindBcpDisplayCriticalString(), FindBcpDisplayCriticalStringCentered(), FindBgpGxDrawRectangle());
     DbgPrintEx(77, 0, "KiSendFreeze: 0x%p\nKiSetDebuggerOwner: 0x%p\n\nVariables:\n\n*FeatureEnabledBsodRejuvenation: 0x%p\nBcpCursor: 0x%p\n#BgInternal_0xF8: 0x%p\nKeActiveProcessors: 0x%p\nKiBugCheckDriver: 0x%p\n\n", FindKiSendFreeze(), FindKiSetDebuggerOwner(), FindFeatureEnabledBsodRejuvenation(), FindBcpCursor(), FindBgInternal_0xF8(), FindKeActiveProcessors(), FindKiBugCheckDriver());
