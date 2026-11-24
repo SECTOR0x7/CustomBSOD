@@ -48,6 +48,7 @@ Once any abnormalities are detected, it will trigger a **blue screen**, even if 
 | **Display images**| Display your own images on the screen ![](/../main/assets/di.png) |
 | **Rainbow BSOD** | Use hooks or callback functions to implement a blue screen that constantly changes colors ![](/../main/assets/rb.gif) |
 | **VGA Mode Support** | Supports 80x25 and 80x50 modes in VGA text mode and supports blinking and rainbow mode (Windows 7 only) ![](/../main/assets/vga.gif) |
+| **BSOD Callbacks** | Use `KeRegisterBugCheckReasonCallback` to register a blue screen callback, perform inline hooking after the blue screen to bypass PatchGuard detection |
 | **Manual BugCheck** | Trigger a controlled system crash for testing purposes |
 
 ## Supported Windows Versions
@@ -72,7 +73,8 @@ Key functions discovered:
 - `KiDisplayBlueScreen` - The function for rendering the BSOD
 - `BgpFwDisplayBugCheckScreen`- The functions called internally by `KiDisplayBlueScreen`, which is actually used for rendering the blue screen
 - `BcpDisplayCriticalString` - This function is used to render text, such as ":("
-- `BcpDisplayCriticalStringCentered` - Just like `BcpDisplayCriticalString`, but it appeared after the Windows 11 25H2 version
+- `BcpDisplayCriticalStringCentered` - Just like `BcpDisplayCriticalString`, but it appeared after Microsoft changed the blue screen to a black screen in Windows 11
+- `BcpDisplayErrorInformationModernized` - The function is used to concatenate and display the termination code of the entire line (after blue screen changed to black screen)
 - `BgpClearScreen` - This function renders the background of the BSOD.
 - `BgpTxtDisplayCharacter` - This function is used to render **one** character on the BSOD.
 - `BgpGxDrawRectangle` - This function is used for writing to the `video memory`, it will eventually use `DpiSystemDisplayWrite`
@@ -127,7 +129,7 @@ Original Function        Hooked Function
 ```
 
 Hooks are installed for:
-- **Stop code text** — the `KeGetBugMessageText` call is patched to replaced with user-defined text
+- **Stop code text** — the `KeGetBugMessageText` or `BcpDisplayErrorInformationModernized` call is patched to replaced with user-defined text
 - **Background color** — the `BgpClearScreen` call is patched to use a custom background color
 - **Foreground color** — the `BgpTxtDisplayCharacter` call is patched with custom foreground/background colors (texts)
 - **Change Text** — the `BcpDisplayCriticalString` or `BcpDisplayCriticalStringCentered` call is patched with custom texts
