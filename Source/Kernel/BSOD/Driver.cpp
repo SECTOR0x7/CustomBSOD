@@ -993,7 +993,7 @@ NTSTATUS InstallBgpClearScreenHook(PVOID BgpClearScreenAddr, ULONG64 color)
 {
     if (!BgpClearScreenAddr) return STATUS_INVALID_PARAMETER;
     if (g_BgpClearScreenHookInfo.Installed) { UninstallBgpClearScreenHook(); if (g_BgpClearScreenHookInfo.Installed) return STATUS_UNSUCCESSFUL; return InstallBgpClearScreenHook(BgpClearScreenAddr, color); }
-    ULONG patchSize = DetectWindowsVersion() > WIN_11_26H1 ? 18u : 15u;
+    ULONG patchSize = winver > WIN_11_26H1 ? 18u : 15u;
     PUCHAR tramp = (PUCHAR)ExAllocatePoolWithTag(NonPagedPoolExecute, 64u, 'pCgB');
     if (!tramp) return STATUS_INSUFFICIENT_RESOURCES;
     RtlZeroMemory(tramp, 64u);
@@ -1063,7 +1063,6 @@ NTSTATUS InstallBgpTxtDisplayCharacterHook(PVOID BgpTxtDisplayCharacterAddr, ULO
 {
     if (!BgpTxtDisplayCharacterAddr) return STATUS_INVALID_PARAMETER;
     if (g_BgpTxtDisplayCharacterHookInfo.Installed) { UninstallBgpTxtDisplayCharacterHook(); if (g_BgpTxtDisplayCharacterHookInfo.Installed) return STATUS_UNSUCCESSFUL; return InstallBgpTxtDisplayCharacterHook(BgpTxtDisplayCharacterAddr, backColor, foreColor); }
-    WINDOWS_VERSION winver = DetectWindowsVersion();
     BOOLEAN isWin11_27H2 = winver > WIN_11_26H1;
     BOOLEAN is4cmd = winver == WIN_8 || (winver > WIN_10 && winver <= WIN_11_26H1);
     ULONG patchSize;
@@ -1956,7 +1955,7 @@ NTSTATUS InstallBcpDisplayErrorInformationModernizedHook(PVOID BcpDisplayErrorIn
 }
 VOID BackupOriginalGP_RECT_DESC()
 {
-    if (DetectWindowsVersion() < WIN_10 || BgInternal_0xF8 == NULL) return;
+    if (winver < WIN_10 || BgInternal_0xF8 == NULL) return;
     __try {
         PGP_RECT_DESC Data = *(PGP_RECT_DESC*)BgInternal_0xF8;
         RtlCopyMemory(&OriginalSrc, Data, sizeof(GP_RECT_DESC));
@@ -2002,8 +2001,8 @@ VOID DisplayImage(ULONG* Image, ULONG64 bgColor, ULONG X, ULONG Y, ULONG W, ULON
     pSrcInfo.H = H;
     pSrcInfo.W = W;
     pSrcInfo.BitsPerPixel = 0x20;
-    pSrcInfo.Stride = W * H * pSrcInfo.BitsPerPixel / (DetectWindowsVersion() > WIN_11_26H1 ? 8 : 4);
-    pSrcInfo.Flags = DetectWindowsVersion() > WIN_11_26H1 ? 8 : 0;
+    pSrcInfo.Stride = W * H * pSrcInfo.BitsPerPixel / (winver > WIN_11_26H1 ? 8 : 4);
+    pSrcInfo.Flags = winver > WIN_11_26H1 ? 8 : 0;
     pSrcInfo.Padding = 0;
     pSrcInfo.PixelData = Image;
     GP_DST_INFO pDstInfo;
@@ -2468,6 +2467,68 @@ static ULONG DecodeEscapedAnsi(CHAR* text, ULONG length) {
     }
     return out;
 }
+static ULONG UTF8ToUTF16(const CHAR* src, ULONG srcLen, WCHAR* dst, ULONG dstMaxChars)
+{
+    ULONG i = 0, j = 0;
+    while (i < srcLen) {
+        UCHAR c = (UCHAR)src[i];
+        ULONG need;
+        WCHAR wc1, wc2 = 0;
+        if (c < 0x80) {
+            wc1 = (WCHAR)c;
+            need = 1;
+            i += 1;
+        }
+        else if ((c & 0xE0) == 0xC0) {
+            if (i + 1 >= srcLen) return (ULONG)-1;
+            UCHAR c1 = (UCHAR)src[i + 1];
+            if ((c1 & 0xC0) != 0x80) return (ULONG)-1;
+            wc1 = (WCHAR)(((c & 0x1F) << 6) | (c1 & 0x3F));
+            if (wc1 < 0x80) return (ULONG)-1;
+            need = 1;
+            i += 2;
+        }
+        else if ((c & 0xF0) == 0xE0) {
+            if (i + 2 >= srcLen) return (ULONG)-1;
+            UCHAR c1 = (UCHAR)src[i + 1];
+            UCHAR c2 = (UCHAR)src[i + 2];
+            if ((c1 & 0xC0) != 0x80 || (c2 & 0xC0) != 0x80) return (ULONG)-1;
+            if (c == 0xE0 && c1 < 0xA0) return (ULONG)-1;
+            if (c == 0xED && c1 >= 0xA0) return (ULONG)-1;
+            wc1 = (WCHAR)(((c & 0x0F) << 12) | ((c1 & 0x3F) << 6) | (c2 & 0x3F));
+            if (wc1 < 0x800) return (ULONG)-1;
+            need = 1;
+            i += 3;
+        }
+        else if ((c & 0xF8) == 0xF0) {
+            if (i + 3 >= srcLen) return (ULONG)-1;
+            UCHAR c1 = (UCHAR)src[i + 1];
+            UCHAR c2 = (UCHAR)src[i + 2];
+            UCHAR c3 = (UCHAR)src[i + 3];
+            if ((c1 & 0xC0) != 0x80 || (c2 & 0xC0) != 0x80 || (c3 & 0xC0) != 0x80) return (ULONG)-1;
+            if (c == 0xF0 && c1 < 0x90) return (ULONG)-1;
+            if (c == 0xF4 && c1 >= 0x90) return (ULONG)-1;
+            if (c > 0xF4) return (ULONG)-1;
+            ULONG cp = ((ULONG)(c & 0x07) << 18) | ((ULONG)(c1 & 0x3F) << 12) |
+                ((ULONG)(c2 & 0x3F) << 6) | (ULONG)(c3 & 0x3F);
+            if (cp < 0x10000 || cp > 0x10FFFF) return (ULONG)-1;
+            cp -= 0x10000;
+            wc1 = (WCHAR)(0xD800 | (cp >> 10));
+            wc2 = (WCHAR)(0xDC00 | (cp & 0x3FF));
+            need = 2;
+            i += 4;
+        }
+        else {
+            return (ULONG)-1;
+        }
+        if (j + need >= dstMaxChars) return (ULONG)-1;
+        dst[j++] = wc1;
+        if (need == 2) dst[j++] = wc2;
+    }
+    if (j >= dstMaxChars) return (ULONG)-1;
+    dst[j] = L'\0';
+    return j;
+}
 NTSTATUS _Write(PDEVICE_OBJECT DeviceObject, PVOID buffer, ULONG bufLen) {
     if (!buffer || bufLen < 3 || ((CHAR*)buffer)[bufLen - 1] != '\0') { LogPrintf(77, 0, "Invalid Parameter (in _Write)"); return STATUS_INVALID_PARAMETER; }
     else {
@@ -2593,59 +2654,12 @@ NTSTATUS _Write(PDEVICE_OBJECT DeviceObject, PVOID buffer, ULONG bufLen) {
                 }
                 PWSTR value = (PWSTR)ExAllocatePoolWithTag(NonPagedPool, (length + 1) * sizeof(WCHAR), 'StcA');
                 if (!value) { textStatus = STATUS_INSUFFICIENT_RESOURCES; break; }
-                ULONG i = 0, out = 0;
-                while (i < length) {
-                    ULONG cp;
-                    UCHAR c = (UCHAR)token[i++];
-                    if (c < 0x80) {
-                        cp = c;
-                    }
-                    else if (c >= 0xC2 && c <= 0xDF) {
-                        if (i >= length) { textStatus = STATUS_INVALID_PARAMETER; break; }
-                        UCHAR c2 = (UCHAR)token[i++];
-                        if ((c2 & 0xC0) != 0x80) { textStatus = STATUS_INVALID_PARAMETER; break; }
-                        cp = ((c & 0x1F) << 6) | (c2 & 0x3F);
-                    }
-                    else if (c >= 0xE0 && c <= 0xEF) {
-                        if (i + 1 >= length) { textStatus = STATUS_INVALID_PARAMETER; break; }
-                        UCHAR c2 = (UCHAR)token[i++];
-                        UCHAR c3 = (UCHAR)token[i++];
-                        if ((c2 & 0xC0) != 0x80 || (c3 & 0xC0) != 0x80 ||
-                            (c == 0xE0 && c2 < 0xA0) || (c == 0xED && c2 >= 0xA0)) {
-                            textStatus = STATUS_INVALID_PARAMETER;
-                            break;
-                        }
-                        cp = ((c & 0x0F) << 12) | ((c2 & 0x3F) << 6) | (c3 & 0x3F);
-                    }
-                    else if (c >= 0xF0 && c <= 0xF4) {
-                        if (i + 2 >= length) { textStatus = STATUS_INVALID_PARAMETER; break; }
-                        UCHAR c2 = (UCHAR)token[i++];
-                        UCHAR c3 = (UCHAR)token[i++];
-                        UCHAR c4 = (UCHAR)token[i++];
-                        if ((c2 & 0xC0) != 0x80 || (c3 & 0xC0) != 0x80 || (c4 & 0xC0) != 0x80 || (c == 0xF0 && c2 < 0x90) || (c == 0xF4 && c2 >= 0x90)) {
-                            textStatus = STATUS_INVALID_PARAMETER;
-                            break;
-                        }
-                        cp = ((c & 0x07) << 18) | ((c2 & 0x3F) << 12) | ((c3 & 0x3F) << 6) | (c4 & 0x3F);
-                    }
-                    else {
-                        textStatus = STATUS_INVALID_PARAMETER;
-                        break;
-                    }
-                    if (cp <= 0xFFFF) {
-                        value[out++] = (WCHAR)cp;
-                    }
-                    else {
-                        cp -= 0x10000;
-                        value[out++] = (WCHAR)(0xD800 + (cp >> 10));
-                        value[out++] = (WCHAR)(0xDC00 + (cp & 0x3FF));
-                    }
-                }
-                if (!NT_SUCCESS(textStatus)) {
+                ULONG out = UTF8ToUTF16(token, (ULONG)length, value, (ULONG)length + 1);
+                if (out == (ULONG)-1) {
                     ExFreePoolWithTag(value, 'StcA');
+                    textStatus = STATUS_INVALID_PARAMETER;
                     break;
                 }
-                value[out] = L'\0';
                 args[argc++] = value;
                 ++cur;
             }
@@ -2666,7 +2680,7 @@ NTSTATUS _Write(PDEVICE_OBJECT DeviceObject, PVOID buffer, ULONG bufLen) {
             while (*cmd == ' ' || *cmd == '\t') cmd++;
             if (*cmd == 'L') { loop = TRUE; cmd++; }
             if (*cmd == '{') cmd++;
-            if (DetectWindowsVersion() == WIN_7) loop = FALSE;
+            if (winver == WIN_7) loop = FALSE;
             struct _OP_NODE {
                 LIST_ENTRY ListEntry;
                 UCHAR Type;
@@ -2743,7 +2757,7 @@ NTSTATUS _Write(PDEVICE_OBJECT DeviceObject, PVOID buffer, ULONG bufLen) {
                     node->StringOp.Str = ansiStr;
                     CHAR* numStart = strEnd + 1;
                     while (*numStart == ' ' || *numStart == '\t') numStart++;
-                    if (DetectWindowsVersion() == WIN_7) {
+                    if (winver == WIN_7) {
                         node->StringOp.IsWin7 = TRUE;
                         ULONG backColor, foreColor, blink, vga80x25, rainbow;
                         int converted = sscanf_s(numStart, "%x %x %x %x %x", &backColor, &foreColor, &blink, &vga80x25, &rainbow);
@@ -2906,17 +2920,11 @@ NTSTATUS _Write(PDEVICE_OBJECT DeviceObject, PVOID buffer, ULONG bufLen) {
                             CHAR* ansi = (CHAR*)ExAllocatePoolWithTag(NonPagedPool, strlen(node->StringOp.Str) + 1, 'DSpA');
                             if (ansi) {
                                 RtlCopyMemory(ansi, node->StringOp.Str, strlen(node->StringOp.Str) + 1);
-                                ANSI_STRING ansiStr;
-                                UNICODE_STRING uniStr;
-                                RtlInitAnsiString(&ansiStr, ansi);
-                                ULONG wlen = RtlAnsiStringToUnicodeSize(&ansiStr) / sizeof(WCHAR);
-                                PWCHAR wstr = (PWCHAR)ExAllocatePoolWithTag(NonPagedPool, (wlen + 1) * sizeof(WCHAR), 'DSpW');
+                                ULONG srcLen = (ULONG)strlen(ansi);
+                                PWCHAR wstr = (PWCHAR)ExAllocatePoolWithTag(NonPagedPool, (srcLen + 1) * sizeof(WCHAR), 'DSpW');
                                 if (wstr) {
-                                    uniStr.Buffer = wstr;
-                                    uniStr.MaximumLength = (USHORT)((wlen + 1) * sizeof(WCHAR));
-                                    if (NT_SUCCESS(RtlAnsiStringToUnicodeString(&uniStr, &ansiStr, FALSE))) {
-                                        DisplayString(wstr, node->StringOp.TextSize, node->StringOp.TbackColor, node->StringOp.TforeColor, node->StringOp.BgColor, node->StringOp.X, node->StringOp.Y, node->StringOp.ClearScreen);
-                                    }
+                                    ULONG wlen = UTF8ToUTF16(ansi, srcLen, wstr, srcLen + 1);
+                                    if (wlen != (ULONG)-1) DisplayString(wstr, node->StringOp.TextSize, node->StringOp.TbackColor, node->StringOp.TforeColor, node->StringOp.BgColor, node->StringOp.X, node->StringOp.Y, node->StringOp.ClearScreen);
                                     ExFreePoolWithTag(wstr, 'DSpW');
                                 }
                                 ExFreePoolWithTag(ansi, 'DSpA');
@@ -2977,15 +2985,11 @@ NTSTATUS _Write(PDEVICE_OBJECT DeviceObject, PVOID buffer, ULONG bufLen) {
                                 CHAR* ansi = (CHAR*)ExAllocatePoolWithTag(NonPagedPool, strlen(node->StringOp.Str) + 1, 'DSpA');
                                 if (ansi) {
                                     RtlCopyMemory(ansi, node->StringOp.Str, strlen(node->StringOp.Str) + 1);
-                                    ANSI_STRING ansiStr;
-                                    UNICODE_STRING uniStr;
-                                    RtlInitAnsiString(&ansiStr, ansi);
-                                    ULONG wlen = RtlAnsiStringToUnicodeSize(&ansiStr) / sizeof(WCHAR);
-                                    PWCHAR wstr = (PWCHAR)ExAllocatePoolWithTag(NonPagedPool, (wlen + 1) * sizeof(WCHAR), 'DSpW');
+                                    ULONG srcLen = (ULONG)strlen(ansi);
+                                    PWCHAR wstr = (PWCHAR)ExAllocatePoolWithTag(NonPagedPool, (srcLen + 1) * sizeof(WCHAR), 'DSpW');
                                     if (wstr) {
-                                        uniStr.Buffer = wstr;
-                                        uniStr.MaximumLength = (USHORT)((wlen + 1) * sizeof(WCHAR));
-                                        if (NT_SUCCESS(RtlAnsiStringToUnicodeString(&uniStr, &ansiStr, FALSE))) DisplayString(wstr, node->StringOp.TextSize, node->StringOp.TbackColor, node->StringOp.TforeColor, node->StringOp.BgColor, node->StringOp.X, node->StringOp.Y, node->StringOp.ClearScreen);
+                                        ULONG wlen = UTF8ToUTF16(ansi, srcLen, wstr, srcLen + 1);
+                                        if (wlen != (ULONG)-1) DisplayString(wstr, node->StringOp.TextSize, node->StringOp.TbackColor, node->StringOp.TforeColor, node->StringOp.BgColor, node->StringOp.X, node->StringOp.Y, node->StringOp.ClearScreen);
                                         ExFreePoolWithTag(wstr, 'DSpW');
                                     }
                                     ExFreePoolWithTag(ansi, 'DSpA');
@@ -3226,7 +3230,7 @@ NTSTATUS _Write(PDEVICE_OBJECT DeviceObject, PVOID buffer, ULONG bufLen) {
             }
         }
         else if (p[0] == 'B' && p[1] == 'C') { //BugCheck
-            if (DetectWindowsVersion() == WIN_7) KeBugCheck(0x0000000000114514);
+            if (winver == WIN_7) KeBugCheck(0x0000000000114514);
             else KeBugCheckEx(0x0000000000000001, 0x00000E2700000000, 0x0000000000000100, 0xFFFFD80F92CE1000, 0xFFFFF8005FE7D180);
         }
         else if (p[0] == 'F' && p[1] == 'H') { //Flush
