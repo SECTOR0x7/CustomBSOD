@@ -12468,7 +12468,7 @@ namespace BsodController
             { "重复最后一条 (不足则重复最后一条)", "Repeat last (fill gaps)" },
             { "循环使用全部 (不足则循环使用字符串列表)", "Cycle all replacement texts" },
             { "固定位置 (一条原始文本固定对应一条字符串) (彩虹蓝屏推荐使用此模式)", "Fixed mapping (rainbow BSOD recommends using this mode)" },
-            { "固定位置 (一条原始文本固定对应一条字符串) (彩虹蓝屏专用)", "Fixed mapping (one original text per string) (rainbow BSOD only)" },
+            { "固定位置 (一条原始文本固定对应一条字符串) (彩虹蓝屏专用)", "Fixed mapping (one original text per string) (Rainbow BSOD recommends using this mode)" },
             { "跳过包含 % 的原始字符串", "Skip original strings containing %" },
             { "固定位置模式下，预览文本可能与真实替换的文本不一致。", "Fixed mapping: preview text may differ from the actual replacement." },
             { "渲染速度: ", "Rendering speed: " },
