@@ -289,8 +289,10 @@ typedef struct _NT_TEXT_RANGE {
     PUCHAR Base;
     SIZE_T Size;
 } NT_TEXT_RANGE, * PNT_TEXT_RANGE;
+NT_TEXT_RANGE NtTextRangeCache = { 0 };
 BOOLEAN GetNtTextRange(PNT_TEXT_RANGE TextRange)
 {
+    if (NtTextRangeCache.Base) { *TextRange = NtTextRangeCache; return TRUE; }
     PVOID ntBase = NULL;
     if (!TextRange) return FALSE;
     RtlZeroMemory(TextRange, sizeof(NT_TEXT_RANGE));
@@ -313,6 +315,7 @@ BOOLEAN GetNtTextRange(PNT_TEXT_RANGE TextRange)
             TextRange->Base = (PUCHAR)ntBase + section.VirtualAddress;
             TextRange->Size = section.Misc.VirtualSize;
             if (TextRange->Size == 0) TextRange->Size = section.SizeOfRawData;
+            NtTextRangeCache = *TextRange;
             return TRUE;
         }
     }
